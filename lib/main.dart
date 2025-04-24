@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:realtime_message_and_video_call_application/Screens/contacts_screen.dart';
+import 'package:realtime_message_and_video_call_application/Screens/profile_screen.dart';
+import 'Screens/home_screen.dart';
 
 void main() {
   runApp(const MyApp());
@@ -11,26 +14,11 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      home: const MyHomePage(title: 'Real-time Messaging and Video calls Application'),
-    );
-  }
-}
-
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-  final String title;
-
-  @override
-  State<MyHomePage> createState() => _MyHomePageState();
-}
-
-class _MyHomePageState extends State<MyHomePage> {
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text('Home')),
-      body: Container(),
+      home: const HomePage(),
+      routes: {
+        '/contacts' : (ctx) => ContactsScreen(),
+        '/profile': (ctx) => ProfileScreen(),
+      }
     );
   }
 }
