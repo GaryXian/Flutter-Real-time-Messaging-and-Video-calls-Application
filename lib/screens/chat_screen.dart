@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../widgets/message_bubble.dart';
 import '../widgets/message_input.dart';
+import 'login_screen.dart';
 
 class ChatScreen extends StatelessWidget {
   const ChatScreen({super.key});
@@ -21,8 +22,19 @@ class ChatScreen extends StatelessWidget {
       ),
     );
 
-    if (confirm == true) {
-      await FirebaseAuth.instance.signOut();
+if (confirm == true) {
+      try {
+        await FirebaseAuth.instance.signOut();
+        // Navigate to login screen and remove all previous routes
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => const LoginScreen()),
+          (Route<dynamic> route) => false,
+        );
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Logout failed: ${e.toString()}')),
+        );
+      }
     }
   }
 
