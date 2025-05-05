@@ -20,8 +20,12 @@ class _MessageInputState extends State<MessageInput> {
   final _controller = TextEditingController();
   String _enteredMessage = '';
 
-  Future<void> _sendMessage({String? fileUrl, String? fileType}) async {
-    final user = FirebaseAuth.instance.currentUser;
+  final _firestore = FirebaseFirestore.instance;
+  final _storage = FirebaseStorage.instance;
+  final _auth = FirebaseAuth.instance;
+
+  Future<void> _sendMessage({String? fileUrl, String fileType = 'text'}) async {
+    final user = _auth.currentUser;
     if (user == null || (_enteredMessage.trim().isEmpty && fileUrl == null)) return;
 
     final senderId = user.uid;
@@ -30,7 +34,7 @@ class _MessageInputState extends State<MessageInput> {
     final timestamp = Timestamp.now();
     final content = _enteredMessage.trim();
 
-    final messageRef = FirebaseFirestore.instance
+    final messageRef = _firestore
         .collection('conversations')
         .doc(conversationId)
         .collection('messages')
@@ -43,11 +47,11 @@ class _MessageInputState extends State<MessageInput> {
       'content': content,
       'timestamp': timestamp,
       'is_read': false,
-      'message_type': fileType ?? 'text',
+      'message_type': fileUrl != null ? fileType : 'text',
       'fileUrl': fileUrl ?? '',
     });
 
-    await FirebaseFirestore.instance.collection('conversations').doc(conversationId).set({
+    await _firestore.collection('conversations').doc(conversationId).set({
       'conversation_id': conversationId,
       'participant_1': senderId,
       'participant_2': receiverId,
@@ -56,40 +60,38 @@ class _MessageInputState extends State<MessageInput> {
     }, SetOptions(merge: true));
 
     _controller.clear();
-    setState(() => _enteredMessage = '');
+    if (mounted) {
+      setState(() => _enteredMessage = '');
+    }
+  }
+
+  Future<void> _uploadAndSendFile({
+    required File file,
+    required String storagePath,
+    required String fileType,
+  }) async {
+    final ref = _storage.ref().child(storagePath);
+    await ref.putFile(file);
+    final url = await ref.getDownloadURL();
+    await _sendMessage(fileUrl: url, fileType: fileType);
   }
 
   Future<void> _pickImage() async {
-    final picker = ImagePicker();
-    final pickedImage = await picker.pickImage(source: ImageSource.gallery);
+    final pickedImage = await ImagePicker().pickImage(source: ImageSource.gallery);
     if (pickedImage == null) return;
 
     final file = File(pickedImage.path);
-    final ref = FirebaseStorage.instance
-        .ref()
-        .child('chat_images')
-        .child('${DateTime.now().millisecondsSinceEpoch}.jpg');
-
-    await ref.putFile(file);
-    final url = await ref.getDownloadURL();
-
-    _sendMessage(fileUrl: url, fileType: 'image');
+    final filename = '${DateTime.now().millisecondsSinceEpoch}.jpg';
+    await _uploadAndSendFile(file: file, storagePath: 'chat_images/$filename', fileType: 'image');
   }
 
   Future<void> _pickFile() async {
     final result = await FilePicker.platform.pickFiles();
     if (result == null || result.files.isEmpty) return;
 
-    final pickedFile = File(result.files.single.path!);
-    final ref = FirebaseStorage.instance
-        .ref()
-        .child('chat_files')
-        .child(result.files.single.name);
-
-    await ref.putFile(pickedFile);
-    final url = await ref.getDownloadURL();
-
-    _sendMessage(fileUrl: url, fileType: 'file');
+    final file = File(result.files.single.path!);
+    final filename = result.files.single.name;
+    await _uploadAndSendFile(file: file, storagePath: 'chat_files/$filename', fileType: 'file');
   }
 
   @override
@@ -99,14 +101,8 @@ class _MessageInputState extends State<MessageInput> {
       padding: const EdgeInsets.all(8),
       child: Row(
         children: [
-          IconButton(
-            onPressed: _pickImage,
-            icon: const Icon(Icons.image),
-          ),
-          IconButton(
-            onPressed: _pickFile,
-            icon: const Icon(Icons.attach_file),
-          ),
+          IconButton(onPressed: _pickImage, icon: const Icon(Icons.image)),
+          IconButton(onPressed: _pickFile, icon: const Icon(Icons.attach_file)),
           Expanded(
             child: TextField(
               controller: _controller,
