@@ -7,7 +7,7 @@ import '../widgets/message_input.dart';
 import 'login_screen.dart';
 
 class ChatScreen extends StatelessWidget {
-  const ChatScreen({super.key});
+  const ChatScreen({super.key, required String receiverId, required String conversationId});
 
   void _logout(BuildContext context) async {
     final confirm = await showDialog<bool>(
