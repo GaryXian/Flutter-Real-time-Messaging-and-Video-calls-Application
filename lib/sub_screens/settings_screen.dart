@@ -13,26 +13,12 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
-    final themeProvider = Provider.of<ThemeProvider>(context);
-
     return Scaffold(
       appBar: AppBar(
         elevation: 0,
         backgroundColor: Colors.blueAccent,
         foregroundColor: Colors.white,
-        title: const Text('Settings'),
-        automaticallyImplyLeading: false,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.arrow_back),
-            onPressed: () {
-              Navigator.pushReplacement(
-                context,
-                MaterialPageRoute(builder: (_) => const ProfileScreen()),
-              );
-            },
-          ),
-        ],
+        title: Text('Settings'),
       ),
       body: ListView(
         children: [
@@ -41,10 +27,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
             title: const Text('Dark theme'),
             subtitle: const Text('Enable or disable dark theme'),
             trailing: Switch(
-              value: themeProvider.isDarkMode,
+              value: Provider.of<ThemeProvider>(context, listen: false).isDarkMode,
               onChanged: (isDarkMode) {
-                themeProvider.toggleTheme();
-              },
+                Provider.of<ThemeProvider>(context, listen: false)
+                    .toggleTheme();
+              }
             ),
           ),
           const Divider(),
