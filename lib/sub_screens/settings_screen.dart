@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:realtime_message_and_video_call_application/widgets/change_theme.dart';
+import '../widgets/change_theme.dart';
 import 'package:provider/provider.dart';
 
 class SettingsScreen extends StatefulWidget {

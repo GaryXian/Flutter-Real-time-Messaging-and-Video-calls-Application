@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "805920219933",
+    "project_id": "algeoapp-144",
+    "storage_bucket": "algeoapp-144.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:805920219933:android:ca81551d7b6db024da77f4",
+        "android_client_info": {
+          "package_name": "com.example.realtime_message_calling"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB9mqg_qDSDFGfaybTrh0S9eBLncFHH1AY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

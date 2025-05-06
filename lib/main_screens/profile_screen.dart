@@ -1,13 +1,46 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+
+import '../screens/login_screen.dart';
+import '../sub_screens/settings_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
+  
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
+  void _logout(BuildContext context) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Logout"),
+        content: const Text("Are you sure you want to logout?"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Logout")),
+        ],
+      ),
+    );
+
+if (confirm == true) {
+      try {
+        await FirebaseAuth.instance.signOut();
+        // Navigate to login screen and remove all previous routes
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => const LoginScreen()),
+          (Route<dynamic> route) => false,
+        );
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Logout failed: ${e.toString()}')),
+        );
+      }
+    }
+  }
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -17,9 +50,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
         actions: [
           IconButton(
             onPressed: () {
-              Navigator.pushNamed(context, '/settings');
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(builder: (_) => const SettingsScreen()),
+              );
             },
-            icon: Icon(Icons.settings))
+            icon: Icon(Icons.settings),
+          ),
         ],
       ),
 
@@ -30,12 +67,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.start,
                 children: [
-                  SizedBox(width: 10,),
+                  SizedBox(width: 10),
                   CircleAvatar(
                     radius: 30,
                     //backgroundImage: NetworkImage(url),
                   ),
-                  SizedBox(width: 20,),
+                  SizedBox(width: 20),
                   Column(
                     mainAxisAlignment: MainAxisAlignment.start,
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -51,10 +88,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           ),
                         ],
                       ),
-                      SizedBox(height: 1,),
+                      SizedBox(height: 1),
                       InkWell(
-                        onTap: () {
-                        },
+                        onTap: () {},
                         child: Row(
                           children: [
                             Text(
@@ -62,8 +98,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               style: TextStyle(
                                 color: Colors.blue,
                                 decoration: TextDecoration.underline,
-                                decorationColor: Colors.blue
-                              )
+                                decorationColor: Colors.blue,
+                              ),
                             ),
                           ],
                         ),
@@ -72,7 +108,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ],
               ),
-              SizedBox(height: 50,),
+              SizedBox(height: 50),
             ],
           ),
           ListTile(
@@ -95,8 +131,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
             trailing: Icon(Icons.chevron_right),
             onTap: () {},
           ),
+          Divider(),
+          ListTile(
+            leading: Icon(Icons.exit_to_app),
+            title: Text('Logout'),
+            trailing: Icon(Icons.chevron_right),
+            onTap: () => _logout(context),
+          ),
         ],
       ),
     );
   }
 }
+

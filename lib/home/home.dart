@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:realtime_message_and_video_call_application/main_screens/friends_screen.dart';
-import 'package:realtime_message_and_video_call_application/main_screens/messages_screen.dart';
-import 'package:realtime_message_and_video_call_application/main_screens/profile_screen.dart';
+
+import '../main_screens/friends_screen.dart';
+import '../main_screens/messages_screen.dart';
+import '../main_screens/profile_screen.dart';
+
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});

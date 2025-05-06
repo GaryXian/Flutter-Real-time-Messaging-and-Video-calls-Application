@@ -15,7 +15,15 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "33CC10EC2044A3C60003C045"
+<<<<<<< HEAD
                BuildableName = "realtime_message_and_video_call_application.app"
+=======
+<<<<<<< HEAD
+               BuildableName = "realtime_message_calling.app"
+=======
+               BuildableName = "realtime_message_and_video_call_application.app"
+>>>>>>> main
+>>>>>>> master
                BlueprintName = "Runner"
                ReferencedContainer = "container:Runner.xcodeproj">
             </BuildableReference>
@@ -31,7 +39,15 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "33CC10EC2044A3C60003C045"
+<<<<<<< HEAD
             BuildableName = "realtime_message_and_video_call_application.app"
+=======
+<<<<<<< HEAD
+            BuildableName = "realtime_message_calling.app"
+=======
+            BuildableName = "realtime_message_and_video_call_application.app"
+>>>>>>> main
+>>>>>>> master
             BlueprintName = "Runner"
             ReferencedContainer = "container:Runner.xcodeproj">
          </BuildableReference>
@@ -66,7 +82,15 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "33CC10EC2044A3C60003C045"
+<<<<<<< HEAD
             BuildableName = "realtime_message_and_video_call_application.app"
+=======
+<<<<<<< HEAD
+            BuildableName = "realtime_message_calling.app"
+=======
+            BuildableName = "realtime_message_and_video_call_application.app"
+>>>>>>> main
+>>>>>>> master
             BlueprintName = "Runner"
             ReferencedContainer = "container:Runner.xcodeproj">
          </BuildableReference>
@@ -83,7 +107,15 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "33CC10EC2044A3C60003C045"
+<<<<<<< HEAD
             BuildableName = "realtime_message_and_video_call_application.app"
+=======
+<<<<<<< HEAD
+            BuildableName = "realtime_message_calling.app"
+=======
+            BuildableName = "realtime_message_and_video_call_application.app"
+>>>>>>> main
+>>>>>>> master
             BlueprintName = "Runner"
             ReferencedContainer = "container:Runner.xcodeproj">
          </BuildableReference>

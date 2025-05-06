@@ -5,7 +5,15 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
+<<<<<<< HEAD
 	<string>Realtime Message And Video Call Application</string>
+=======
+<<<<<<< HEAD
+	<string>Realtime Message Calling</string>
+=======
+	<string>Realtime Message And Video Call Application</string>
+>>>>>>> main
+>>>>>>> master
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -13,7 +21,15 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
+<<<<<<< HEAD
 	<string>realtime_message_and_video_call_application</string>
+=======
+<<<<<<< HEAD
+	<string>realtime_message_calling</string>
+=======
+	<string>realtime_message_and_video_call_application</string>
+>>>>>>> main
+>>>>>>> master
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
