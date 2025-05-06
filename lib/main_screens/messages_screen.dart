@@ -34,7 +34,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
       appBar: AppBar(
         elevation: 0,
         title: const Text('Messages'),
-        automaticallyImplyLeading: true, // back button if needed
+        automaticallyImplyLeading: true,
         actions: [IconButton(onPressed: () {}, icon: const Icon(Icons.add))],
       ),
       body: ListView.builder(
