@@ -1,6 +1,11 @@
 {
+<<<<<<< HEAD
     "name": "realtime_message_calling",
     "short_name": "realtime_message_calling",
+=======
+    "name": "realtime_message_and_video_call_application",
+    "short_name": "realtime_message_and_video_call_application",
+>>>>>>> main
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
