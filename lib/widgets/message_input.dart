@@ -5,12 +5,16 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import '../utils/utils.dart';
 
 class MessageInput extends StatefulWidget {
-  final String receiverId;
+  final String conversationId;
+  final List<String> participants;
 
-  const MessageInput({super.key, required this.receiverId, required String conversationId});
+  const MessageInput({
+    super.key,
+    required this.conversationId,
+    required this.participants,
+  });
 
   @override
   State<MessageInput> createState() => _MessageInputState();
@@ -18,54 +22,46 @@ class MessageInput extends StatefulWidget {
 
 class _MessageInputState extends State<MessageInput> {
   final _controller = TextEditingController();
-  String _enteredMessage = '';
-
-  final _firestore = FirebaseFirestore.instance;
+  final _currentUser = FirebaseAuth.instance.currentUser;
   final _storage = FirebaseStorage.instance;
-  final _auth = FirebaseAuth.instance;
 
-  Future<void> _sendMessage({String? fileUrl, String fileType = 'text'}) async {
-    final user = _auth.currentUser;
-    if (user == null || (_enteredMessage.trim().isEmpty && fileUrl == null)) return;
+  Future<void> _sendMessage({String? fileUrl, String? fileType}) async {
+    if (_currentUser == null) return;
 
-    final senderId = user.uid;
-    final receiverId = widget.receiverId;
-    final conversationId = getConversationId(senderId, receiverId);
-    final timestamp = Timestamp.now();
-    final content = _enteredMessage.trim();
+    final content = _controller.text.trim();
+    if (content.isEmpty && fileUrl == null) return;
 
-    final messageRef = _firestore
+    final messageRef = FirebaseFirestore.instance
         .collection('conversations')
-        .doc(conversationId)
+        .doc(widget.conversationId)
         .collection('messages')
         .doc();
 
     await messageRef.set({
-      'message_id': messageRef.id,
-      'sender_id': senderId,
-      'receiver_id': receiverId,
+      'senderId': _currentUser.uid,
       'content': content,
-      'timestamp': timestamp,
-      'is_read': false,
-      'message_type': fileUrl != null ? fileType : 'text',
       'fileUrl': fileUrl ?? '',
+      'fileType': fileType ?? '',
+      'timestamp': Timestamp.now(),
+      'status': 'sent',
+      'messageType': fileUrl != null ? fileType : 'text',
     });
 
-    await _firestore.collection('conversations').doc(conversationId).set({
-      'conversation_id': conversationId,
-      'participant_1': senderId,
-      'participant_2': receiverId,
-      'last_message_id': messageRef.id,
-      'updated_at': timestamp,
-    }, SetOptions(merge: true));
+    // Update conversation last message
+    await FirebaseFirestore.instance
+        .collection('conversations')
+        .doc(widget.conversationId)
+        .update({
+      'lastMessage': fileUrl != null ? 'Sent an attachment' : content,
+      'lastMessageTime': Timestamp.now(),
+      'lastMessageType': fileUrl != null ? fileType : 'text',
+    });
 
     _controller.clear();
-    if (mounted) {
-      setState(() => _enteredMessage = '');
-    }
   }
 
-  Future<void> _uploadAndSendFile({
+  // ... (keep existing _pickImage, _pickFile, _uploadAndSendFile methods)
+Future<void> _uploadAndSendFile({
     required File file,
     required String storagePath,
     required String fileType,
@@ -93,32 +89,35 @@ class _MessageInputState extends State<MessageInput> {
     final filename = result.files.single.name;
     await _uploadAndSendFile(file: file, storagePath: 'chat_files/$filename', fileType: 'file');
   }
-
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(top: 8),
       padding: const EdgeInsets.all(8),
       child: Row(
         children: [
-          IconButton(onPressed: _pickImage, icon: const Icon(Icons.image)),
-          IconButton(onPressed: _pickFile, icon: const Icon(Icons.attach_file)),
+          IconButton(
+            icon: const Icon(Icons.image),
+            onPressed: _pickImage,
+          ),
+          IconButton(
+            icon: const Icon(Icons.attach_file),
+            onPressed: _pickFile,
+          ),
           Expanded(
             child: TextField(
               controller: _controller,
-              textCapitalization: TextCapitalization.sentences,
-              autocorrect: true,
-              enableSuggestions: true,
-              onChanged: (value) {
-                setState(() => _enteredMessage = value);
-              },
+              decoration: const InputDecoration(
+                hintText: 'Type a message...',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.all(Radius.circular(25)),
+                ),
+              ),
               onSubmitted: (_) => _sendMessage(),
-              decoration: const InputDecoration(labelText: 'Send a message...'),
             ),
           ),
           IconButton(
-            onPressed: _enteredMessage.trim().isEmpty ? null : () => _sendMessage(),
             icon: const Icon(Icons.send),
+            onPressed: () => _sendMessage(),
           ),
         ],
       ),

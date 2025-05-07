@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:realtime_message_calling/home/home.dart';
 import 'register_screen.dart';
-import 'reset_password_screen.dart';
+//import 'reset_password_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
