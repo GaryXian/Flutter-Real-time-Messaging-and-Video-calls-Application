@@ -79,7 +79,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
             leading: Icon(Icons.person),
             title: Text('Informations'),
             trailing: Icon(Icons.chevron_right),
-            onTap: () {},
+            onTap: () {
+              Navigator.pushNamed(context, '/information');
+            },
           ),
           Divider(),
           ListTile(
