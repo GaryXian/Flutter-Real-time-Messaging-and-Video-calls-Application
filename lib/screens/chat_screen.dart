@@ -1,7 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 
 import '../widgets/message_bubble.dart';
 import '../widgets/message_input.dart';
@@ -24,37 +23,40 @@ class _ChatScreenState extends State<ChatScreen> {
   final ScrollController _scrollController = ScrollController();
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  String? _currentUserId;
-  String? _otherUserId;
+
+  late final String _currentUserId;
+  late final String _otherUserId;
+
   String? _otherUserName;
+  bool _messagesMarkedAsRead = false; // optimization flag
 
   @override
   void initState() {
     super.initState();
-    _currentUserId = _auth.currentUser?.uid;
-    _otherUserId = widget.participants.firstWhere(
-      (id) => id != _currentUserId,
-      orElse: () => '',
-    );
+    final userId = _auth.currentUser?.uid;
+    if (userId == null) {
+      throw Exception('No authenticated user');
+    }
+    _currentUserId = userId;
+    _otherUserId = widget.participants.firstWhere((id) => id != _currentUserId, orElse: () => '');
+
     _loadOtherUserInfo();
-    _markMessagesAsRead();
   }
 
   Future<void> _loadOtherUserInfo() async {
-    if (_otherUserId == null || _otherUserId!.isEmpty) return;
-    
+    if (_otherUserId.isEmpty) return;
     final userDoc = await _firestore.collection('users').doc(_otherUserId).get();
-    if (mounted) {
+    if (userDoc.exists && mounted) {
       setState(() {
         _otherUserName = userDoc['displayName'];
       });
     }
   }
 
-  Future<void> _markMessagesAsRead() async {
-    if (_currentUserId == null || widget.conversationId.isEmpty) return;
+  Future<void> _markMessagesAsReadOnce() async {
+    if (_messagesMarkedAsRead) return; // prevent re-trigger
+    _messagesMarkedAsRead = true;
 
-    // Mark all unread messages as read
     final unreadMessages = await _firestore
         .collection('conversations')
         .doc(widget.conversationId)
@@ -63,40 +65,46 @@ class _ChatScreenState extends State<ChatScreen> {
         .where('isRead', isEqualTo: false)
         .get();
 
+    if (unreadMessages.docs.isEmpty) return;
+
     final batch = _firestore.batch();
     for (final doc in unreadMessages.docs) {
-      batch.update(doc.reference, {'isRead': true, 'readAt': Timestamp.now()});
+      batch.update(doc.reference, {
+        'isRead': true,
+        'readAt': Timestamp.now(),
+      });
     }
-    await batch.commit();
 
-    // Update conversation unread count
-    await _firestore
-        .collection('conversations')
-        .doc(widget.conversationId)
-        .update({
-          'unreadCount.$_currentUserId': 0,
-        });
+    batch.update(
+      _firestore.collection('conversations').doc(widget.conversationId),
+      {'unreadCount.$_currentUserId': 0},
+    );
+
+    await batch.commit();
   }
 
   void _scrollToBottom() {
     if (_scrollController.hasClients) {
-      SchedulerBinding.instance.addPostFrameCallback((_) {
-        _scrollController.animateTo(
-          0,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
-      });
+      _scrollController.animateTo(
+        0,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final messageStream = _firestore
+        .collection('conversations')
+        .doc(widget.conversationId)
+        .collection('messages')
+        .orderBy('timestamp', descending: true)
+        .snapshots();
+
     return Scaffold(
       appBar: AppBar(
-        title: _otherUserName != null
-            ? Text(_otherUserName!)
-            : const Text('Chat'),
+        title: Text(_otherUserName ?? 'Chat'),
         actions: [
           IconButton(
             icon: const Icon(Icons.info_outline),
@@ -108,23 +116,27 @@ class _ChatScreenState extends State<ChatScreen> {
         children: [
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
-              stream: _firestore
-                  .collection('conversations')
-                  .doc(widget.conversationId)
-                  .collection('messages')
-                  .orderBy('timestamp', descending: true)
-                  .snapshots(),
+              stream: messageStream,
               builder: (ctx, snapshot) {
-                if (!snapshot.hasData) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
                 }
 
-                // Scroll to bottom when new messages arrive
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  _scrollToBottom();
-                });
+                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                  return const Center(child: Text('No messages yet.'));
+                }
 
                 final messages = snapshot.data!.docs;
+
+                // Mark as read only on first load with data
+                _markMessagesAsReadOnce();
+
+                // Scroll to bottom only when new messages arrive
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (messages.isNotEmpty) {
+                    _scrollToBottom();
+                  }
+                });
 
                 return ListView.builder(
                   controller: _scrollController,
@@ -161,14 +173,14 @@ class _ChatScreenState extends State<ChatScreen> {
   void _showChatInfo(BuildContext context) {
     showModalBottomSheet(
       context: context,
-      builder: (ctx) => FutureBuilder(
+      builder: (ctx) => FutureBuilder<DocumentSnapshot>(
         future: _firestore.collection('users').doc(_otherUserId).get(),
         builder: (context, snapshot) {
-          if (!snapshot.hasData) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
 
-          final user = snapshot.data!.data() ?? {};
+          final user = snapshot.data?.data() as Map<String, dynamic>? ?? {};
 
           return Padding(
             padding: const EdgeInsets.all(16),
@@ -177,12 +189,8 @@ class _ChatScreenState extends State<ChatScreen> {
               children: [
                 CircleAvatar(
                   radius: 40,
-                  backgroundImage: user['photoURL'] != null
-                      ? NetworkImage(user['photoURL'])
-                      : null,
-                  child: user['photoURL'] == null
-                      ? const Icon(Icons.person, size: 40)
-                      : null,
+                  backgroundImage: user['photoURL'] != null ? NetworkImage(user['photoURL']) : null,
+                  child: user['photoURL'] == null ? const Icon(Icons.person, size: 40) : null,
                 ),
                 const SizedBox(height: 16),
                 Text(
@@ -231,36 +239,34 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
 
-    if (confirm == true) {
-      try {
-        // First delete all messages
-        final messages = await _firestore
-            .collection('conversations')
-            .doc(widget.conversationId)
-            .collection('messages')
-            .get();
+    if (confirm != true) return;
 
-        final batch = _firestore.batch();
-        for (final doc in messages.docs) {
-          batch.delete(doc.reference);
-        }
-        await batch.commit();
+    try {
+      final messagesRef = _firestore
+          .collection('conversations')
+          .doc(widget.conversationId)
+          .collection('messages');
 
-        // Then delete the conversation
-        await _firestore
-            .collection('conversations')
-            .doc(widget.conversationId)
-            .delete();
+      final messages = await messagesRef.get();
+      final batch = _firestore.batch();
 
-        if (mounted) {
-          Navigator.pop(context);
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to delete: ${e.toString()}')),
-          );
-        }
+      for (final doc in messages.docs) {
+        batch.delete(doc.reference);
+      }
+
+      final conversationRef = _firestore.collection('conversations').doc(widget.conversationId);
+      batch.delete(conversationRef);
+
+      await batch.commit();
+
+      if (mounted) {
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to delete: ${e.toString()}')),
+        );
       }
     }
   }

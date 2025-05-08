@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:intl/intl.dart';
 import '../screens/chat_screen.dart';
 
 class MessagesScreen extends StatefulWidget {
@@ -12,28 +13,156 @@ class MessagesScreen extends StatefulWidget {
 
 class _MessagesScreenState extends State<MessagesScreen> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final Map<String, Map<String, dynamic>> _userCache = {};
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final TextEditingController _searchController = TextEditingController();
+  List<Map<String, dynamic>> _availableUsers = [];
+  bool _isLoadingUsers = false;
 
   String _generateConversationId(String userId1, String userId2) {
-    return userId1.compareTo(userId2) < 0 
-        ? '${userId1}_$userId2' 
+    return userId1.compareTo(userId2) < 0
+        ? '${userId1}_$userId2'
         : '${userId2}_$userId1';
   }
 
-  void _openChatRoom(BuildContext context, String contactId, String contactName) {
+  Future<void> _startNewConversation(
+    String contactId,
+    String contactName,
+  ) async {
     final currentUserId = _auth.currentUser?.uid;
     if (currentUserId == null) return;
 
     final conversationId = _generateConversationId(currentUserId, contactId);
-    
+
+    try {
+      // Check if conversation exists
+      final conversationDoc =
+          await _firestore
+              .collection('conversations')
+              .doc(conversationId)
+              .get();
+
+      if (!conversationDoc.exists) {
+        await _firestore.collection('conversations').doc(conversationId).set({
+          'conversationId': conversationId,
+          'participants': [currentUserId, contactId],
+          'participantNames': {
+            currentUserId: _auth.currentUser?.displayName ?? 'You',
+            contactId: contactName,
+          },
+          'lastMessage': 'Conversation started',
+          'lastMessageTime': FieldValue.serverTimestamp(),
+          'createdAt': FieldValue.serverTimestamp(),
+          'unreadCount': {
+            currentUserId: 0,
+            contactId: 1, // Mark as unread for the recipient
+          },
+        });
+      }
+
+      if (!mounted) return;
+      _openChatRoom(context, contactId, contactName, conversationId);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to start conversation: ${e.toString()}'),
+        ),
+      );
+    }
+  }
+
+  void _openChatRoom(
+    BuildContext context,
+    String contactId,
+    String contactName,
+    String conversationId,
+  ) {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (ctx) => ChatScreen(
-          conversationId: conversationId,
-          participants: [currentUserId, contactId],
-        ),
+        builder:
+            (ctx) => ChatScreen(
+              conversationId: conversationId,
+              participants: [_auth.currentUser!.uid, contactId],
+            ),
       ),
     );
+  }
+
+  Future<Map<String, dynamic>> _getUserInfo(String userId) async {
+    if (_userCache.containsKey(userId)) {
+      return _userCache[userId]!;
+    }
+
+    final doc = await _firestore.collection('users').doc(userId).get();
+    final data = doc.data() ?? {};
+    _userCache[userId] = data;
+    return data;
+  }
+
+  Future<void> _loadFriends() async {
+    final currentUserId = _auth.currentUser?.uid;
+    if (currentUserId == null) return;
+
+    setState(() => _isLoadingUsers = true);
+    try {
+      // Get friend list from subcollection users/{uid}/friends
+      final friendsSnapshot =
+          await _firestore
+              .collection('users')
+              .doc(currentUserId)
+              .collection('friends')
+              .get();
+
+      final friendIds = friendsSnapshot.docs.map((doc) => doc.id).toSet();
+
+      // Get users info of friends
+      final friendsData = await Future.wait(
+        friendIds.map((id) => _firestore.collection('users').doc(id).get()),
+      );
+
+      // Get existing conversations
+      final conversationsSnapshot =
+          await _firestore
+              .collection('conversations')
+              .where('participants', arrayContains: currentUserId)
+              .get();
+
+      final existingContacts =
+          conversationsSnapshot.docs
+              .expand(
+                (doc) => (doc.data()['participants'] as List).cast<String>(),
+              )
+              .where((id) => id != currentUserId)
+              .toSet();
+
+      setState(() {
+        _availableUsers =
+            friendsData.where((doc) => doc.exists).map((doc) {
+              final data = doc.data()!;
+              return {
+                'uid': doc.id,
+                'displayName': data['displayName'] ?? 'Unknown',
+                'email': data['email'] ?? '',
+                'photoURL': data['photoURL'] ?? '',
+                'hasConversation': existingContacts.contains(doc.id),
+              };
+            }).toList();
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to load friends: ${e.toString()}')),
+      );
+    } finally {
+      setState(() => _isLoadingUsers = false);
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFriends();
   }
 
   @override
@@ -47,7 +176,6 @@ class _MessagesScreenState extends State<MessagesScreen> {
       appBar: AppBar(
         elevation: 0,
         title: const Text('Messages'),
-        automaticallyImplyLeading: true,
         actions: [
           IconButton(
             onPressed: () => _showNewChatDialog(context),
@@ -56,22 +184,41 @@ class _MessagesScreenState extends State<MessagesScreen> {
         ],
       ),
       body: StreamBuilder<QuerySnapshot>(
-        stream: _firestore
-            .collection('conversations')
-            .where('participants', arrayContains: currentUserId)
-            .orderBy('lastMessageTime', descending: true)
-            .snapshots(),
+        stream:
+            _firestore
+                .collection('conversations')
+                .where('participants', arrayContains: currentUserId)
+                .orderBy('lastMessageTime', descending: true)
+                .snapshots(),
         builder: (context, snapshot) {
-          if (!snapshot.hasData) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
 
-          final conversations = snapshot.data!.docs;
-
-          if (conversations.isEmpty) {
-            return const Center(child: Text('No conversations yet'));
+          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text('No conversations yet'),
+                  TextButton(
+                    onPressed: () => _showNewChatDialog(context),
+                    child: const Text('Start a new conversation'),
+                  ),
+                ],
+              ),
+            );
           }
 
+          final conversations =
+              snapshot.data!.docs
+                  .map(
+                    (doc) => {
+                      'id': doc.id,
+                      ...doc.data() as Map<String, dynamic>,
+                    },
+                  )
+                  .toList();
           return ListView.builder(
             itemCount: conversations.length,
             itemBuilder: (ctx, index) {
@@ -82,8 +229,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
                 orElse: () => '',
               );
 
-              return FutureBuilder<DocumentSnapshot>(
-                future: _firestore.collection('users').doc(otherUserId).get(),
+              return FutureBuilder<Map<String, dynamic>>(
+                future: _getUserInfo(otherUserId),
                 builder: (context, userSnapshot) {
                   if (!userSnapshot.hasData) {
                     return const ListTile(
@@ -91,16 +238,17 @@ class _MessagesScreenState extends State<MessagesScreen> {
                     );
                   }
 
-                  final userData = userSnapshot.data!.data() as Map<String, dynamic>? ?? {};
-                  
+                  final userData = userSnapshot.data!;
                   return ListTile(
                     leading: CircleAvatar(
-                      backgroundImage: userData['photoURL'] != null 
-                          ? NetworkImage(userData['photoURL'])
-                          : null,
-                      child: userData['photoURL'] == null 
-                          ? const Icon(Icons.person)
-                          : null,
+                      backgroundImage:
+                          userData['photoURL'] != null
+                              ? NetworkImage(userData['photoURL'])
+                              : null,
+                      child:
+                          userData['photoURL'] == null
+                              ? const Icon(Icons.person)
+                              : null,
                     ),
                     title: Text(userData['displayName'] ?? 'Unknown'),
                     subtitle: Text(
@@ -108,15 +256,41 @@ class _MessagesScreenState extends State<MessagesScreen> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    trailing: Text(
-                      _formatTimestamp(convo['lastMessageTime'] as Timestamp?),
-                      style: const TextStyle(fontSize: 12),
+                    trailing: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          _formatTimestamp(
+                            convo['lastMessageTime'] as Timestamp?,
+                          ),
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                        if (convo['unreadCount']?[currentUserId] != null &&
+                            convo['unreadCount'][currentUserId] > 0)
+                          Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: const BoxDecoration(
+                              color: Colors.blue,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Text(
+                              convo['unreadCount'][currentUserId].toString(),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
-                    onTap: () => _openChatRoom(
-                      context,
-                      otherUserId,
-                      userData['displayName'] ?? 'Unknown',
-                    ),
+                    onTap:
+                        () => _openChatRoom(
+                          context,
+                          otherUserId,
+                          userData['displayName'] ?? 'Unknown',
+                          convo['id'],
+                        ),
                   );
                 },
               );
@@ -127,62 +301,103 @@ class _MessagesScreenState extends State<MessagesScreen> {
     );
   }
 
+
   String _formatTimestamp(Timestamp? timestamp) {
     if (timestamp == null) return '';
     final date = timestamp.toDate();
     final now = DateTime.now();
-    
-    if (date.year == now.year && 
-        date.month == now.month && 
+
+    if (date.year == now.year &&
+        date.month == now.month &&
         date.day == now.day) {
-      return '${date.hour}:${date.minute.toString().padLeft(2, '0')}';
+      return DateFormat('HH:mm').format(date);
     }
-    return '${date.month}/${date.day}';
+    return DateFormat('MMM d').format(date);
   }
 
   Future<void> _showNewChatDialog(BuildContext context) async {
-    final currentUserId = _auth.currentUser?.uid;
-    if (currentUserId == null) return;
-
-    final users = await _firestore
-        .collection('users')
-        .where('uid', isNotEqualTo: currentUserId)
-        .get();
+    await _loadFriends();
 
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Start new chat'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: ListView.builder(
-            shrinkWrap: true,
-            itemCount: users.docs.length,
-            itemBuilder: (ctx, index) {
-              final user = users.docs[index].data();
-              return ListTile(
-                leading: CircleAvatar(
-                  backgroundImage: user['photoURL'] != null 
-                      ? NetworkImage(user['photoURL'])
-                      : null,
-                  child: user['photoURL'] == null 
-                      ? const Icon(Icons.person)
-                      : null,
-                ),
-                title: Text(user['displayName'] ?? 'Unknown'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _openChatRoom(
-                    context,
-                    user['uid'],
-                    user['displayName'] ?? 'Unknown',
-                  );
-                },
-              );
-            },
+      builder:
+          (ctx) => AlertDialog(
+            title: const Text('New Conversation'),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _isLoadingUsers
+                      ? const Center(child: CircularProgressIndicator())
+                      : _availableUsers.isEmpty
+                      ? const Padding(
+                        padding: EdgeInsets.all(16.0),
+                        child: Text('No friends available'),
+                      )
+                      : Expanded(
+                        child: ListView.builder(
+                          shrinkWrap: true,
+                          itemCount: _availableUsers.length,
+                          itemBuilder: (ctx, index) {
+                            final user = _availableUsers[index];
+                            final alreadyChatted =
+                                user['hasConversation'] == true;
+
+                            return ListTile(
+                              leading: CircleAvatar(
+                                backgroundImage:
+                                    user['photoURL'] != null
+                                        ? NetworkImage(user['photoURL'])
+                                        : null,
+                                child:
+                                    user['photoURL'] == null
+                                        ? const Icon(Icons.person)
+                                        : null,
+                              ),
+                              title: Text(user['displayName'] ?? 'Unknown'),
+                              subtitle: Text(user['email'] ?? ''),
+                              trailing:
+                                  alreadyChatted
+                                      ? const Text(
+                                        'Already chatted',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey,
+                                        ),
+                                      )
+                                      : null,
+                              enabled: !alreadyChatted,
+                              onTap:
+                                  alreadyChatted
+                                      ? null
+                                      : () {
+                                        Navigator.pop(ctx);
+                                        _startNewConversation(
+                                          user['uid'],
+                                          user['displayName'] ?? 'Unknown',
+                                        );
+                                      },
+                            );
+                          },
+                        ),
+                      ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel'),
+              ),
+            ],
           ),
-        ),
-      ),
     );
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 }

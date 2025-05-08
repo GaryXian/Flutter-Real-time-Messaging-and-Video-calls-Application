@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:realtime_message_calling/home/home.dart';
 import 'register_screen.dart';
-//import 'reset_password_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -14,22 +14,90 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  bool _isLoading = false;
 
   Future<void> login() async {
+    setState(() => _isLoading = true);
     try {
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
+      final userCredential = await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: emailController.text.trim(),
         password: passwordController.text.trim(),
       );
+
+      // Check and initialize user data structures
+      await _initializeUserData(userCredential.user!);
+
+      if (!mounted) return;
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => const HomePage()),
       );
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Login Failed: $e")),
       );
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  Future<void> _initializeUserData(User user) async {
+    final userRef = _firestore.collection('users').doc(user.uid);
+    final userDoc = await userRef.get();
+
+    // If user document doesn't exist or is missing required fields
+    if (!userDoc.exists || !_hasRequiredData(userDoc.data()!)) {
+      await _createUserStructures(user);
+    }
+  }
+
+  bool _hasRequiredData(Map<String, dynamic>? userData) {
+    if (userData == null) return false;
+    
+    final requiredFields = [
+      'uid', 'email', 'displayName', 'createdAt', 
+      'lastActive', 'status', 'friendsCount'
+    ];
+    
+    return requiredFields.every((field) => userData.containsKey(field));
+  }
+
+  Future<void> _createUserStructures(User user) async {
+    final batch = _firestore.batch();
+    final userRef = _firestore.collection('users').doc(user.uid);
+
+    // 1. Create/update main user document
+    batch.set(userRef, {
+      'uid': user.uid,
+      'email': user.email,
+      'displayName': user.displayName ?? 'User${user.uid.substring(0, 6)}',
+      'photoURL': user.photoURL ?? '',
+      'createdAt': FieldValue.serverTimestamp(),
+      'lastActive': FieldValue.serverTimestamp(),
+      'status': 'online',
+      'fcmToken': '',
+      'friendsCount': 0,
+      'pendingRequestsCount': 0,
+    }, SetOptions(merge: true));
+
+    // 2. Ensure friends subcollection exists (no need to add documents)
+    final friendsRef = userRef.collection('friends');
+    
+    // 3. Ensure friend_requests subcollection exists
+    final requestsRef = userRef.collection('friend_requests');
+    
+    // 4. Set default privacy settings if they don't exist
+    final privacyRef = userRef.collection('settings').doc('privacy');
+    batch.set(privacyRef, {
+      'allowFriendRequests': true,
+      'allowConversations': true,
+      'showOnlineStatus': true,
+      'lastUpdated': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+
+    await batch.commit();
   }
 
   Future<void> resetPassword() async {
@@ -71,9 +139,7 @@ class _LoginScreenState extends State<LoginScreen> {
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             const SizedBox(height: 20),
-            // Optional: add a logo or image here
-            // Image.asset('assets/logo.png', height: 100),
-
+            
             TextFormField(
               controller: emailController,
               keyboardType: TextInputType.emailAddress,
@@ -85,6 +151,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ),
             const SizedBox(height: 10),
+            
             TextFormField(
               controller: passwordController,
               maxLength: 16,
@@ -99,16 +166,20 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
             const SizedBox(height: 10),
 
-            ElevatedButton(
-              onPressed: login,
-              child: const Text('Login'),
-            ),
-            //need to work on this
-            /*TextButton(
+            _isLoading
+                ? const CircularProgressIndicator()
+                : ElevatedButton(
+                    onPressed: login,
+                    child: const Text('Login'),
+                  ),
+            
+            TextButton(
               onPressed: resetPassword,
               child: const Text("Forgot password?"),
-            ),*/
+            ),
+            
             const SizedBox(height: 10),
+            
             ElevatedButton(
               onPressed: goToRegister,
               child: const Text('Create Account'),
@@ -118,5 +189,11 @@ class _LoginScreenState extends State<LoginScreen> {
       ),
     );
   }
+
+  @override
+  void dispose() {
+    emailController.dispose();
+    passwordController.dispose();
+    super.dispose();
+  }
 }
-//git pull origin main
