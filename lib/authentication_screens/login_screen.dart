@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:realtime_message_calling/authentication_screens/reset_password_screen.dart';
 import 'package:realtime_message_calling/home/home.dart';
 import 'register_screen.dart';
 //import 'reset_password_screen.dart';
@@ -99,10 +100,15 @@ class _LoginScreenState extends State<LoginScreen> {
               onFieldSubmitted: (_) => login(),
             ),
             const SizedBox(height: 10),
-            const Text(
-              'Forgot Password?',
-              style: TextStyle(
-                fontStyle: FontStyle.italic,
+            InkWell(
+              onTap: () {
+                Navigator.push(context, MaterialPageRoute(builder: (context) => ResetPasswordScreen()));
+              },
+              child: const Text(
+                'Forgot Password?',
+                style: TextStyle(
+                  fontStyle: FontStyle.italic,
+                ),
               ),
             ),
             const SizedBox(height: 10),
