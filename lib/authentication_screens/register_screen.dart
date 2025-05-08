@@ -17,10 +17,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final confirmPasswordController = TextEditingController();
   final displayNameController = TextEditingController();
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  bool _isRegistering = false;
 
   Future<void> _registerUser() async {
     if (!_formKey.currentState!.validate()) return;
 
+    setState(() => _isRegistering = true);
+    
     final email = emailController.text.trim();
     final password = passwordController.text.trim();
     final displayName = displayNameController.text.trim();
@@ -36,8 +39,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
       // 2. Update user display name in Auth
       await userCredential.user?.updateDisplayName(displayName);
 
-      // 3. Create user document in Firestore
-      await _createUserDocument(
+      // 3. Create complete user document with all required structures
+      await _createUserStructures(
         userId: userCredential.user!.uid,
         email: email,
         displayName: displayName,
@@ -61,15 +64,22 @@ class _RegisterScreenState extends State<RegisterScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Error: ${e.toString()}")),
       );
+    } finally {
+      if (mounted) setState(() => _isRegistering = false);
     }
   }
 
-  Future<void> _createUserDocument({
+  Future<void> _createUserStructures({
     required String userId,
     required String email,
     required String displayName,
   }) async {
-    await _firestore.collection('users').doc(userId).set({
+    // Create a batch to perform all writes atomically
+    final batch = _firestore.batch();
+
+    // 1. Create main user document
+    final userRef = _firestore.collection('users').doc(userId);
+    batch.set(userRef, {
       'uid': userId,
       'email': email,
       'displayName': displayName,
@@ -78,7 +88,29 @@ class _RegisterScreenState extends State<RegisterScreen> {
       'lastActive': FieldValue.serverTimestamp(),
       'status': 'offline',
       'fcmToken': '', // Will be updated when device registers
+      'friendsCount': 0,
+      'pendingRequestsCount': 0,
     });
+
+    // 2. Create empty friends subcollection
+    final friendsRef = userRef.collection('friends');
+    // Just creating the reference is enough, no need to add documents yet
+
+    // 3. Create empty friend_requests subcollection
+    final requestsRef = userRef.collection('friend_requests');
+    // Just creating the reference is enough
+
+    // 4. Create default privacy settings
+    final privacyRef = userRef.collection('settings').doc('privacy');
+    batch.set(privacyRef, {
+      'allowFriendRequests': true,
+      'allowConversations': true,
+      'showOnlineStatus': true,
+      'lastUpdated': FieldValue.serverTimestamp(),
+    });
+
+    // Commit the batch
+    await batch.commit();
   }
 
   @override
@@ -154,8 +186,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ),
               const SizedBox(height: 20),
               ElevatedButton(
-                onPressed: _registerUser,
-                child: const Text("Register"),
+                onPressed: _isRegistering ? null : _registerUser,
+                child: _isRegistering
+                    ? const CircularProgressIndicator()
+                    : const Text("Register"),
               ),
             ],
           ),
