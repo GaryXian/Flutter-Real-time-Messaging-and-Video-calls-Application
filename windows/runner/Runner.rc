@@ -90,12 +90,27 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "com.example" "\0"
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+            VALUE "FileDescription", "realtime_message_calling" "\0"
+            VALUE "FileVersion", VERSION_AS_STRING "\0"
+            VALUE "InternalName", "realtime_message_calling" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2025 com.example. All rights reserved." "\0"
+            VALUE "OriginalFilename", "realtime_message_calling.exe" "\0"
+            VALUE "ProductName", "realtime_message_calling" "\0"
+=======
+>>>>>>> master
             VALUE "FileDescription", "realtime_message_and_video_call_application" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "realtime_message_and_video_call_application" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2025 com.example. All rights reserved." "\0"
             VALUE "OriginalFilename", "realtime_message_and_video_call_application.exe" "\0"
             VALUE "ProductName", "realtime_message_and_video_call_application" "\0"
+<<<<<<< HEAD
+=======
+>>>>>>> main
+>>>>>>> master
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

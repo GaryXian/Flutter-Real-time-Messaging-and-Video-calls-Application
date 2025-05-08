@@ -1,20 +1,24 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:realtime_message_and_video_call_application/main_screens/friends_screen.dart';
-import 'package:realtime_message_and_video_call_application/main_screens/messages_screen.dart';
-import 'package:realtime_message_and_video_call_application/main_screens/profile_screen.dart';
-import 'package:realtime_message_and_video_call_application/sub_screens/informations_screen.dart';
-import 'package:realtime_message_and_video_call_application/sub_screens/settings_screen.dart';
-import 'package:realtime_message_and_video_call_application/authentication_screens/login_screen.dart';
-import 'package:realtime_message_and_video_call_application/widgets/change_theme.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+
+import 'firebase_options.dart';
 import 'home/home.dart';
+import 'main_screens/friends_screen.dart';
+import 'main_screens/messages_screen.dart';
+import 'main_screens/profile_screen.dart';
+import 'authentication_screens/login_screen.dart';
+import 'sub_screens/settings_screen.dart';
+import 'widgets/change_theme.dart';
 
-
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   runApp(
     ChangeNotifierProvider(
       create: (context) => ThemeProvider(),
-      child: const MyApp()
+      child: const MyApp(),
     ),
   );
 }
@@ -22,21 +26,34 @@ void main() {
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      home: const LoginScreen(),
+      title: 'Realtime Message & Video Call App',
       theme: Provider.of<ThemeProvider>(context).themeData,
       routes: {
-        '/login' : (ctx) => LoginScreen(),
-        '/home' : (ctx) => HomePage(),
-        '/message' : (ctx) => MessagesScreen(),
-        '/contacts' : (ctx) => ContactsScreen(),
-        '/profile' : (ctx) => ProfileScreen(),
-        '/settings' : (ctx) => SettingsScreen(),
-        '/information' : (ctx) => InformationsScreen(),
-      }
+        '/login': (ctx) => const LoginScreen(),
+        '/home': (ctx) => const HomePage(),
+        '/message': (ctx) => const MessagesScreen(),
+        '/contacts': (ctx) => const ContactsScreen(),
+        '/profile': (ctx) => const ProfileScreen(),
+        '/settings': (ctx) => const SettingsScreen(),
+      },
+      home: StreamBuilder<User?>(
+        stream: FirebaseAuth.instance.authStateChanges(),
+        builder: (ctx, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Scaffold(
+              body: Center(child: CircularProgressIndicator()),
+            );
+          }
+          if (snapshot.hasData) {
+            return const HomePage();
+          } else {
+            return const LoginScreen();
+          }
+        },
+      ),
     );
   }
 }

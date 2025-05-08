@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:realtime_message_and_video_call_application/widgets/themes.dart';
+import '../widgets/themes.dart';
 
 class ThemeProvider with ChangeNotifier {
   ThemeData _themeData = lightMode;
