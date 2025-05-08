@@ -125,16 +125,24 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Register")),
-      body: Padding(
+      appBar: AppBar(
+        title: const Text("Register"),
+        automaticallyImplyLeading: false,
+      ),
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Form(
           key: _formKey,
           child: Column(
             children: [
+              SizedBox(height: 10,),
               TextFormField(
                 controller: emailController,
-                decoration: const InputDecoration(labelText: "Email"),
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  labelText: "Email",
+                  hintText: 'Enter your email',
+                ),
                 keyboardType: TextInputType.emailAddress,
                 validator: (value) {
                   if (value == null || value.isEmpty) {
@@ -146,9 +154,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   return null;
                 },
               ),
+              const SizedBox(height: 10,),
               TextFormField(
                 controller: displayNameController,
-                decoration: const InputDecoration(labelText: "Display Name"),
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  labelText: "Display Name",
+                  hintText: 'Enter a display name'
+                ),
                 validator: (value) {
                   if (value == null || value.isEmpty) {
                     return 'Please enter a display name';
@@ -159,9 +172,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   return null;
                 },
               ),
+              const SizedBox(height: 10,),
               TextFormField(
                 controller: passwordController,
-                decoration: const InputDecoration(labelText: "Password"),
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  labelText: "Password",
+                  hintText: 'Enter a password'
+                ),
                 obscureText: true,
                 validator: (value) {
                   if (value == null || value.isEmpty) {
@@ -173,9 +191,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   return null;
                 },
               ),
+              const SizedBox(height: 10,),
               TextFormField(
                 controller: confirmPasswordController,
-                decoration: const InputDecoration(labelText: "Confirm Password"),
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  labelText: "Confirm Password",
+                  hintText: 'Enter your password'
+                ),
                 obscureText: true,
                 validator: (value) {
                   if (value != passwordController.text) {
@@ -189,8 +212,31 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 onPressed: _isRegistering ? null : _registerUser,
                 child: _isRegistering
                     ? const CircularProgressIndicator()
-                    : const Text("Register"),
+                    : const Text(
+                      "Register",
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold
+                ),
+                    ),
+                style: ElevatedButton.styleFrom(
+                  minimumSize: Size.fromHeight(55),
+                  backgroundColor: Colors.blue,
+                ),
               ),
+              const SizedBox(height: 10,),
+              InkWell(
+                onTap: () {
+                  Navigator.pop(context);
+                },
+                child: const Text(
+                  'Already have an account?',
+                  style: TextStyle(
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              )
             ],
           ),
         ),
