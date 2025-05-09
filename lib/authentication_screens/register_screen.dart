@@ -126,7 +126,25 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Register"),
+        toolbarHeight: 100,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              "Sign Up",
+              style: TextStyle(
+                fontSize: 30,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const Text(
+              'Welcome, our new user!',
+              style: TextStyle(
+                fontSize: 14,
+              ),
+            )
+          ],
+        ),
         automaticallyImplyLeading: false,
       ),
       body: SingleChildScrollView(
@@ -140,13 +158,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 controller: emailController,
                 decoration: const InputDecoration(
                   border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.email),
                   labelText: "Email",
-                  hintText: 'Enter your email',
+                  hintText: 'Enter an email',
                 ),
                 keyboardType: TextInputType.emailAddress,
                 validator: (value) {
                   if (value == null || value.isEmpty) {
-                    return 'Please enter your email';
+                    return 'Please enter an email';
                   }
                   if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value)) {
                     return 'Please enter a valid email';
@@ -159,12 +178,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 controller: displayNameController,
                 decoration: const InputDecoration(
                   border: OutlineInputBorder(),
-                  labelText: "Display Name",
-                  hintText: 'Enter a display name'
+                  prefixIcon: Icon(Icons.person),
+                  labelText: "Username",
+                  hintText: 'What would you like to be called?'
                 ),
                 validator: (value) {
                   if (value == null || value.isEmpty) {
-                    return 'Please enter a display name';
+                    return 'Please enter a username name';
                   }
                   if (value.length < 3) {
                     return 'Name must be at least 3 characters';
@@ -174,11 +194,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ),
               const SizedBox(height: 10,),
               TextFormField(
+                keyboardType: TextInputType.visiblePassword,
                 controller: passwordController,
                 decoration: const InputDecoration(
                   border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.lock),
                   labelText: "Password",
-                  hintText: 'Enter a password'
+                  hintText: 'Enter a password (6-16 characters)'
                 ),
                 obscureText: true,
                 validator: (value) {
@@ -193,32 +215,37 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ),
               const SizedBox(height: 10,),
               TextFormField(
+                keyboardType: TextInputType.visiblePassword,
                 controller: confirmPasswordController,
                 decoration: const InputDecoration(
                   border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.check),
                   labelText: "Confirm Password",
-                  hintText: 'Enter your password'
+                  hintText: 'Enter your password (6-16 characters)'
                 ),
                 obscureText: true,
                 validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Please enter a password';
+                  }
                   if (value != passwordController.text) {
                     return 'Passwords do not match';
                   }
                   return null;
                 },
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 30),
               ElevatedButton(
                 onPressed: _isRegistering ? null : _registerUser,
                 child: _isRegistering
                     ? const CircularProgressIndicator()
                     : const Text(
-                      "Register",
+                      "Sign up",
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 18,
                         fontWeight: FontWeight.bold
-                ),
+                      ),
                     ),
                 style: ElevatedButton.styleFrom(
                   minimumSize: Size.fromHeight(55),
@@ -226,16 +253,30 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
               ),
               const SizedBox(height: 10,),
-              InkWell(
-                onTap: () {
-                  Navigator.pop(context);
-                },
-                child: const Text(
-                  'Already have an account?',
-                  style: TextStyle(
-                    fontStyle: FontStyle.italic,
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    'Already have an account?',
+                    style: TextStyle(
+                      fontStyle: FontStyle.italic
+                    ),
                   ),
-                ),
+                  SizedBox(width: 5,),
+                  InkWell(
+                    onTap: () {
+                      Navigator.pop(context);
+                    },
+                    child: const Text(
+                      'Sign In',
+                      style: TextStyle(
+                        color: Colors.blue,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 18,
+                      ),
+                    ),
+                  ),
+                ],
               )
             ],
           ),

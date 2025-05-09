@@ -410,7 +410,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         const Divider(),
         ListTile(
           leading: const Icon(Icons.exit_to_app),
-          title: const Text('Logout'),
+          title: const Text('Log Out'),
           trailing: const Icon(Icons.chevron_right),
           onTap: () => _logout(context),
         ),

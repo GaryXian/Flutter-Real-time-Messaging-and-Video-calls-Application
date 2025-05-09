@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:flutter_facebook_auth/flutter_facebook_auth.dart';
 import 'package:realtime_message_calling/authentication_screens/reset_password_screen.dart';
 import 'package:realtime_message_calling/home/home.dart';
 import 'register_screen.dart';
@@ -62,10 +64,57 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
+  Future<void> loginWithGoogle() async {
+  try {
+    final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
+    if (googleUser == null) return;
+
+    final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+
+    final AuthCredential credential = GoogleAuthProvider.credential(
+      accessToken: googleAuth.accessToken,
+      idToken: googleAuth.idToken,
+    );
+
+    await FirebaseAuth.instance.signInWithCredential(credential);
+    Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const HomePage()));
+  } catch (e) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text("Google Sign-In Failed: $e")),
+    );
+  }
+}
+
+Future<void> loginWithFacebook() async {
+  try {
+    final LoginResult result = await FacebookAuth.instance.login();
+    if (result.status != LoginStatus.success || result.accessToken == null) return;
+
+    final OAuthCredential credential = FacebookAuthProvider.credential(result.accessToken!.tokenString);
+
+    await FirebaseAuth.instance.signInWithCredential(credential);
+    Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const HomePage()));
+  } catch (e) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text("Facebook Sign-In Failed: $e")),
+    );
+  }
+}
+
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Welcome!")),
+      appBar: AppBar(
+        toolbarHeight: 100,
+        title: const Text(
+          "Welcome!",
+          style: TextStyle(
+            fontSize: 30,
+            fontWeight: FontWeight.bold
+          ),
+        ),
+      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Column(
@@ -90,6 +139,7 @@ class _LoginScreenState extends State<LoginScreen> {
               controller: passwordController,
               maxLength: 16,
               obscureText: true,
+              keyboardType: TextInputType.visiblePassword,
               decoration: const InputDecoration(
                 border: OutlineInputBorder(),
                 prefixIcon: Icon(Icons.lock),
@@ -99,7 +149,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               onFieldSubmitted: (_) => login(),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 5),
             InkWell(
               onTap: () {
                 Navigator.push(context, MaterialPageRoute(builder: (context) => ResetPasswordScreen()));
@@ -111,7 +161,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 30),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
                 minimumSize: Size.fromHeight(55),
@@ -119,7 +169,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               onPressed: login,
               child: const Text(
-                'Login',
+                'Sign In',
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 18,
@@ -141,6 +191,43 @@ class _LoginScreenState extends State<LoginScreen> {
                   fontWeight: FontWeight.bold
                 ),
               ),
+            ),
+            SizedBox(height: 20,),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const SizedBox(height: 20),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      minimumSize: Size(50, 50), // Adjust size for better layout
+                      backgroundColor: Colors.white,
+                      side: const BorderSide(color: Colors.grey), // Adds border for visibility
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(5), // Ensures sharp corners for a square button
+                      ),
+                    ),
+                    onPressed: loginWithGoogle,
+                    icon: Image.asset('assets/images/google_icon.png', height: 24),
+                    label: Text(''), // Ensure correct file path
+                  ),
+                ),
+                const SizedBox(width: 10), // Adds spacing
+                Expanded(
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      minimumSize: Size(50, 50),
+                      backgroundColor: Colors.blue[800],
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(5), // Ensures sharp corners for a square button
+                      ),
+                    ),
+                    onPressed: loginWithFacebook,
+                    icon: const Icon(Icons.facebook, color: Colors.white),
+                    label: Text(''),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
