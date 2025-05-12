@@ -5,6 +5,7 @@ import 'package:flutter_facebook_auth/flutter_facebook_auth.dart';
 import 'package:realtime_message_calling/authentication_screens/reset_password_screen.dart';
 import 'package:realtime_message_calling/home/home.dart';
 import 'register_screen.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 //import 'reset_password_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -17,23 +18,30 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   Future<void> login() async {
-    try {
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: emailController.text.trim(),
-        password: passwordController.text.trim(),
-      );
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const HomePage()),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Login Failed: $e")),
-      );
+  try {
+    final userCredential = await FirebaseAuth.instance.signInWithEmailAndPassword(
+      email: emailController.text.trim(),
+      password: passwordController.text.trim(),
+    );
+    final user = userCredential.user;
+    if (user != null) {
+      await _initializeUserData(user);  // <-- ADD THIS
     }
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => const HomePage()),
+    );
+  } catch (e) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text("Login Failed: $e")),
+    );
   }
+}
+
 
   Future<void> resetPassword() async {
     if (emailController.text.trim().isEmpty) {
@@ -64,6 +72,133 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
+    Future<void> _initializeUserData(User user) async {
+    final userRef = _firestore.collection('users').doc(user.uid);
+    final userDoc = await userRef.get();
+
+    if (!userDoc.exists) {
+      await _createUserStructures(user);
+    } else {
+      await _updateUserStructures(user);
+    }
+  }
+  Future<void> _createUserStructures(User user) async {
+    final userRef = _firestore.collection('users').doc(user.uid);
+    await userRef.set({
+      'uid': user.uid,
+      'displayName': user.displayName ?? 'User${user.uid.substring(0, 6)}',
+      'email': user.email ?? '',
+      'phone': user.phoneNumber ?? '',
+      'photoURL': user.photoURL ?? '',
+      'createdAt': FieldValue.serverTimestamp(),
+      'lastActive': FieldValue.serverTimestamp(),
+      'status': 'online',
+      'fcmToken': '',
+      'friendsCount': 0,
+      'pendingRequestsCount': 0,
+    });
+
+    await _initializeSubcollections(user);
+  }
+  Future<void> _updateUserStructures(User user) async {
+    final userRef = _firestore.collection('users').doc(user.uid);
+    final userDoc = await userRef.get();
+
+    if (!userDoc.exists) return;
+
+    final currentData = userDoc.data() ?? {};
+    final updates = {
+      if (currentData['displayName'] == null || currentData['displayName'].isEmpty)
+        'displayName': user.displayName ?? 'User${user.uid.substring(0, 6)}',
+      if (currentData['email'] == null || currentData['email'].isEmpty)
+        'email': user.email ?? '',
+      if (currentData['phone'] == null || currentData['phone'].isEmpty)
+        'phone': user.phoneNumber ?? '',
+      if (currentData['photoURL'] == null || currentData['photoURL'].isEmpty)
+        'photoURL': user.photoURL ?? '',
+      if (currentData['createdAt'] == null)
+        'createdAt': FieldValue.serverTimestamp(),
+      if (currentData['lastActive'] == null)
+        'lastActive': FieldValue.serverTimestamp(),
+      if (currentData['status'] == null || currentData['status'].isEmpty)
+        'status': 'online',
+      if (currentData['fcmToken'] == null)
+        'fcmToken': '',
+      if (currentData['friendsCount'] == null)
+        'friendsCount': 0,
+      if (currentData['pendingRequestsCount'] == null)
+        'pendingRequestsCount': 0,
+    };
+
+    if (updates.isNotEmpty) {
+      await userRef.set(updates, SetOptions(merge: true));
+    }
+
+    await _initializeSubcollections(user);
+  }
+
+  Future<void> _initializeSubcollections(User user) async {
+    final userRef = _firestore.collection('users').doc(user.uid);
+
+    // Check friends collection
+    final friendsSnapshot = await userRef.collection('friends').limit(1).get();
+    if (friendsSnapshot.docs.isEmpty) {
+      await userRef.collection('friends').doc(user.uid).set({
+        'uid': user.uid,
+        'displayName': user.displayName ?? 'User${user.uid.substring(0, 6)}',
+        'email': user.email ?? '',
+        'photoURL': user.photoURL ?? '',
+      });
+    }
+
+  Future<void> _createUserStructures(User user) async {
+    final batch = _firestore.batch();
+    final userRef = _firestore.collection('users').doc(user.uid);
+
+    batch.set(userRef, {
+      'uid': user.uid,
+      'email': user.email ?? '',
+      'phone': user.phoneNumber ?? '',
+      'displayName': user.displayName ?? 'User${user.uid.substring(0, 6)}',
+      'photoURL': user.photoURL ?? '',
+      'createdAt': FieldValue.serverTimestamp(),
+      'lastActive': FieldValue.serverTimestamp(),
+      'status': 'online',
+      'fcmToken': '',
+      'friendsCount': 0,
+      'pendingRequestsCount': 0,
+    }, SetOptions(merge: true));
+
+    final privacyRef = userRef.collection('settings').doc('privacy');
+    batch.set(privacyRef, {
+      'allowFriendRequests': true,
+      'allowConversations': true,
+      'showOnlineStatus': true,
+      'lastUpdated': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+
+    final notificationsRef = userRef
+        .collection('settings')
+        .doc('notifications');
+    batch.set(notificationsRef, {
+      'message': true,
+      'call': true,
+      'friendRequest': true,
+      'lastUpdated': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+
+    final friendsRef = userRef.collection('friends').doc(user.uid);
+    batch.set(friendsRef, {
+      'uid': user.uid,
+      'displayName': user.displayName ?? 'User${user.uid.substring(0, 6)}',
+      'email': user.email ?? '',
+      'photoURL': user.photoURL ?? '',
+    }, SetOptions(merge: true));
+
+    await batch.commit();
+  }
+  }
+
   Future<void> loginWithGoogle() async {
   try {
     final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
@@ -76,7 +211,12 @@ class _LoginScreenState extends State<LoginScreen> {
       idToken: googleAuth.idToken,
     );
 
-    await FirebaseAuth.instance.signInWithCredential(credential);
+    final userCredential = await FirebaseAuth.instance.signInWithCredential(credential);
+    final user = userCredential.user;
+    if (user != null) {
+      await _initializeUserData(user);   // <-- ADD THIS
+    }
+
     Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const HomePage()));
   } catch (e) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -85,6 +225,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
+
 Future<void> loginWithFacebook() async {
   try {
     final LoginResult result = await FacebookAuth.instance.login();
@@ -92,7 +233,12 @@ Future<void> loginWithFacebook() async {
 
     final OAuthCredential credential = FacebookAuthProvider.credential(result.accessToken!.tokenString);
 
-    await FirebaseAuth.instance.signInWithCredential(credential);
+    final userCredential = await FirebaseAuth.instance.signInWithCredential(credential);
+    final user = userCredential.user;
+    if (user != null) {
+      await _initializeUserData(user);
+    }
+
     Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const HomePage()));
   } catch (e) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -208,7 +354,7 @@ Future<void> loginWithFacebook() async {
                       ),
                     ),
                     onPressed: loginWithGoogle,
-                    icon: Image.asset('assets/images/google_icon.png', height: 24),
+                    icon: Image.asset('lib/assets/images/google_icon.png', height: 24),
                     label: Text(''), // Ensure correct file path
                   ),
                 ),
@@ -233,6 +379,7 @@ Future<void> loginWithFacebook() async {
         ),
       ),
     );
+    }
   }
-}
+
 //git pull origin main
