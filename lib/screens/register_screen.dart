@@ -13,120 +13,131 @@ class RegisterScreen extends StatefulWidget {
 class _RegisterScreenState extends State<RegisterScreen> {
   final _formKey = GlobalKey<FormState>();
   final emailController = TextEditingController();
+  final phoneController = TextEditingController();
   final passwordController = TextEditingController();
   final confirmPasswordController = TextEditingController();
   final displayNameController = TextEditingController();
+
+  final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
   bool _isRegistering = false;
 
-  Future<void> _registerUser() async {
-    if (!_formKey.currentState!.validate()) return;
-
-    setState(() => _isRegistering = true);
-    
-    final email = emailController.text.trim();
-    final password = passwordController.text.trim();
-    final displayName = displayNameController.text.trim();
-
-    try {
-      // 1. Create Firebase Auth user
-      final userCredential = await FirebaseAuth.instance
-          .createUserWithEmailAndPassword(
-            email: email,
-            password: password,
-          );
-
-      // 2. Update user display name in Auth
-      await userCredential.user?.updateDisplayName(displayName);
-
-      // 3. Create complete user document with all required structures
-      await _createUserStructures(
-        userId: userCredential.user!.uid,
-        email: email,
-        displayName: displayName,
-      );
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Registration Successful!")),
-      );
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const LoginScreen()),
-      );
-    } on FirebaseAuthException catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Registration failed: ${e.message}")),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error: ${e.toString()}")),
-      );
-    } finally {
-      if (mounted) setState(() => _isRegistering = false);
-    }
+  void _showMessage(String message, {bool error = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: error ? Colors.red : null),
+    );
   }
 
-  Future<void> _createUserStructures({
-    required String userId,
-    required String email,
-    required String displayName,
-  }) async {
-    // Create a batch to perform all writes atomically
-    final batch = _firestore.batch();
+  bool _validateForm() {
+    final isValid = _formKey.currentState?.validate() ?? false;
+    if (passwordController.text != confirmPasswordController.text) {
+      _showMessage("Passwords do not match", error: true);
+      return false;
+    }
+    return isValid;
+  }
 
-    // 1. Create main user document
-    final userRef = _firestore.collection('users').doc(userId);
+  Future<void> _createUserStructures(User user, String phone, String displayName) async {
+    final batch = _firestore.batch();
+    final userRef = _firestore.collection('users').doc(user.uid);
+
     batch.set(userRef, {
-      'uid': userId,
-      'email': email,
+      'uid': user.uid,
+      'email': user.email ?? '',
+      'phone': phone,
       'displayName': displayName,
-      'photoURL': '', // Can be updated later
+      'photoURL': '',
       'createdAt': FieldValue.serverTimestamp(),
       'lastActive': FieldValue.serverTimestamp(),
       'status': 'offline',
-      'fcmToken': '', // Will be updated when device registers
+      'fcmToken': '',
       'friendsCount': 0,
       'pendingRequestsCount': 0,
     });
 
-    // 2. Create empty friends subcollection
-    final friendsRef = userRef.collection('friends');
-    // Just creating the reference is enough, no need to add documents yet
-
-    // 3. Create empty friend_requests subcollection
-    final requestsRef = userRef.collection('friend_requests');
-    // Just creating the reference is enough
-
-    // 4. Create default privacy settings
-    final privacyRef = userRef.collection('settings').doc('privacy');
-    batch.set(privacyRef, {
+    batch.set(userRef.collection('settings').doc('privacy'), {
       'allowFriendRequests': true,
       'allowConversations': true,
       'showOnlineStatus': true,
       'lastUpdated': FieldValue.serverTimestamp(),
     });
+    batch.set(userRef.collection('settings').doc('notifications'), {
+      'messageNotifications': true,
+      'friendRequestNotifications': true,
+      'lastUpdated': FieldValue.serverTimestamp(),
+    });
+    batch.set(userRef.collection('friends').doc(user.uid), {
+      'uid': user.uid,
+      'displayName': displayName,
+      'email': user.email ?? '',
+      'photoURL': '',
+    });
 
-    // Commit the batch
     await batch.commit();
+  }
+
+  Future<void> _registerUser() async {
+    if (!_validateForm()) return;
+
+    setState(() => _isRegistering = true);
+
+    final email = emailController.text.trim();
+    final phone = phoneController.text.trim();
+    final password = passwordController.text.trim();
+    final displayName = displayNameController.text.trim();
+
+    try {
+      final userCredential = await _auth.createUserWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+
+      final user = userCredential.user!;
+      await user.updateDisplayName(displayName);
+
+      await _createUserStructures(user, phone, displayName);
+
+      _showMessage("Registration Successful!");
+      if (!mounted) return;
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+      );
+    } on FirebaseAuthException catch (e) {
+      _showMessage("Registration failed: ${e.message}", error: true);
+    } catch (e) {
+      _showMessage("Error: $e", error: true);
+    } finally {
+      if (mounted) setState(() => _isRegistering = false);
+    }
+  }
+
+  InputDecoration _inputDecoration(String label, IconData icon) {
+    return InputDecoration(
+      labelText: label,
+      prefixIcon: Icon(icon),
+      border: const OutlineInputBorder(),
+    );
   }
 
   @override
   void dispose() {
     emailController.dispose();
+    phoneController.dispose();
     passwordController.dispose();
     confirmPasswordController.dispose();
     displayNameController.dispose();
     super.dispose();
   }
 
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text("Register")),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Form(
           key: _formKey,
@@ -134,62 +145,73 @@ class _RegisterScreenState extends State<RegisterScreen> {
             children: [
               TextFormField(
                 controller: emailController,
-                decoration: const InputDecoration(labelText: "Email"),
+                decoration: _inputDecoration("Email", Icons.email),
                 keyboardType: TextInputType.emailAddress,
                 validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter your email';
-                  }
-                  if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value)) {
-                    return 'Please enter a valid email';
-                  }
+                  if (value == null || value.isEmpty) return 'Enter your email';
+                  final emailRegex = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$');
+                  if (!emailRegex.hasMatch(value)) return 'Enter a valid email';
                   return null;
                 },
               ),
+              const SizedBox(height: 10),
+
+              TextFormField(
+                controller: phoneController,
+                decoration: _inputDecoration("Phone Number", Icons.phone),
+                keyboardType: TextInputType.phone,
+                validator: (value) {
+                  if (value == null || value.isEmpty) return 'Enter your phone number';
+                  final phoneRegex = RegExp(r'^\+?\d{7,15}$');
+                  if (!phoneRegex.hasMatch(value)) return 'Enter a valid phone number';
+                  return null;
+                },
+              ),
+              const SizedBox(height: 10),
+
               TextFormField(
                 controller: displayNameController,
-                decoration: const InputDecoration(labelText: "Display Name"),
+                decoration: _inputDecoration("Display Name", Icons.person),
                 validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter a display name';
-                  }
-                  if (value.length < 3) {
-                    return 'Name must be at least 3 characters';
-                  }
+                  if (value == null || value.isEmpty) return 'Enter a display name';
+                  if (value.length < 3) return 'Name must be at least 3 characters';
                   return null;
                 },
               ),
+              const SizedBox(height: 10),
+
               TextFormField(
                 controller: passwordController,
-                decoration: const InputDecoration(labelText: "Password"),
+                decoration: _inputDecoration("Password", Icons.lock),
                 obscureText: true,
                 validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter a password';
-                  }
-                  if (value.length < 6) {
-                    return 'Password must be at least 6 characters';
-                  }
+                  if (value == null || value.isEmpty) return 'Enter a password';
+                  if (value.length < 6) return 'Password must be at least 6 characters';
                   return null;
                 },
               ),
+              const SizedBox(height: 10),
+
               TextFormField(
                 controller: confirmPasswordController,
-                decoration: const InputDecoration(labelText: "Confirm Password"),
+                decoration: _inputDecoration("Confirm Password", Icons.lock_outline),
                 obscureText: true,
                 validator: (value) {
-                  if (value != passwordController.text) {
-                    return 'Passwords do not match';
-                  }
+                  if (value == null || value.isEmpty) return 'Confirm your password';
                   return null;
                 },
               ),
               const SizedBox(height: 20),
-              ElevatedButton(
-                onPressed: _isRegistering ? null : _registerUser,
-                child: _isRegistering
-                    ? const CircularProgressIndicator()
-                    : const Text("Register"),
+
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton(
+                  onPressed: _isRegistering ? null : _registerUser,
+                  child: _isRegistering
+                      ? const CircularProgressIndicator(color: Colors.white)
+                      : const Text("Register"),
+                ),
               ),
             ],
           ),

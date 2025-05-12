@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../widgets/message_bubble.dart';
 import '../widgets/message_input.dart';
+import 'call_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   final String conversationId;
@@ -38,14 +39,18 @@ class _ChatScreenState extends State<ChatScreen> {
       throw Exception('No authenticated user');
     }
     _currentUserId = userId;
-    _otherUserId = widget.participants.firstWhere((id) => id != _currentUserId, orElse: () => '');
+    _otherUserId = widget.participants.firstWhere(
+      (id) => id != _currentUserId,
+      orElse: () => '',
+    );
 
     _loadOtherUserInfo();
   }
 
   Future<void> _loadOtherUserInfo() async {
     if (_otherUserId.isEmpty) return;
-    final userDoc = await _firestore.collection('users').doc(_otherUserId).get();
+    final userDoc =
+        await _firestore.collection('users').doc(_otherUserId).get();
     if (userDoc.exists && mounted) {
       setState(() {
         _otherUserName = userDoc['displayName'];
@@ -57,22 +62,20 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_messagesMarkedAsRead) return; // prevent re-trigger
     _messagesMarkedAsRead = true;
 
-    final unreadMessages = await _firestore
-        .collection('conversations')
-        .doc(widget.conversationId)
-        .collection('messages')
-        .where('senderId', isEqualTo: _otherUserId)
-        .where('isRead', isEqualTo: false)
-        .get();
+    final unreadMessages =
+        await _firestore
+            .collection('conversations')
+            .doc(widget.conversationId)
+            .collection('messages')
+            .where('senderId', isEqualTo: _otherUserId)
+            .where('isRead', isEqualTo: false)
+            .get();
 
     if (unreadMessages.docs.isEmpty) return;
 
     final batch = _firestore.batch();
     for (final doc in unreadMessages.docs) {
-      batch.update(doc.reference, {
-        'isRead': true,
-        'readAt': Timestamp.now(),
-      });
+      batch.update(doc.reference, {'isRead': true, 'readAt': Timestamp.now()});
     }
 
     batch.update(
@@ -93,6 +96,34 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  void _startVoiceCall() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (ctx) => CallScreen(
+          conversationId: widget.conversationId,
+          callerId: _currentUserId,
+          receiverId: _otherUserId,
+          isVideoCall: false,
+        ),
+      ),
+    );
+  }
+
+  void _startVideoCall() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (ctx) => CallScreen(
+          conversationId: widget.conversationId,
+          callerId: _currentUserId,
+          receiverId: _otherUserId,
+          isVideoCall: true,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final messageStream = _firestore
@@ -109,6 +140,11 @@ class _ChatScreenState extends State<ChatScreen> {
           IconButton(
             icon: const Icon(Icons.info_outline),
             onPressed: () => _showChatInfo(context),
+          ),
+          IconButton(icon: const Icon(Icons.call), onPressed: _startVoiceCall),
+          IconButton(
+            icon: const Icon(Icons.videocam),
+            onPressed: _startVideoCall,
           ),
         ],
       ),
@@ -189,8 +225,12 @@ class _ChatScreenState extends State<ChatScreen> {
               children: [
                 CircleAvatar(
                   radius: 40,
-                  backgroundImage: user['photoURL'] != null ? NetworkImage(user['photoURL']) : null,
-                  child: user['photoURL'] == null ? const Icon(Icons.person, size: 40) : null,
+                  backgroundImage: user['photoURL'] != null
+                      ? NetworkImage(user['photoURL'])
+                      : null,
+                  child: user['photoURL'] == null
+                      ? const Icon(Icons.person, size: 40)
+                      : null,
                 ),
                 const SizedBox(height: 16),
                 Text(
@@ -225,12 +265,9 @@ class _ChatScreenState extends State<ChatScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Delete Conversation?'),
-        content: const Text('All messages will be permanently deleted.'),
+        content: const Text('All messages and calls will be permanently deleted.'),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Delete', style: TextStyle(color: Colors.red)),
@@ -242,18 +279,32 @@ class _ChatScreenState extends State<ChatScreen> {
     if (confirm != true) return;
 
     try {
+      final batch = _firestore.batch();
+
+      // Delete messages
       final messagesRef = _firestore
           .collection('conversations')
           .doc(widget.conversationId)
           .collection('messages');
-
       final messages = await messagesRef.get();
-      final batch = _firestore.batch();
-
       for (final doc in messages.docs) {
         batch.delete(doc.reference);
       }
 
+      // Delete call data (calls + iceCandidates)
+      final callDocRef = _firestore.collection('calls').doc(widget.conversationId);
+      final callDoc = await callDocRef.get();
+      if (callDoc.exists) {
+        // Delete iceCandidates
+        final candidatesRef = callDocRef.collection('iceCandidates');
+        final candidates = await candidatesRef.get();
+        for (final doc in candidates.docs) {
+          batch.delete(doc.reference);
+        }
+        batch.delete(callDocRef);
+      }
+
+      // Delete conversation document
       final conversationRef = _firestore.collection('conversations').doc(widget.conversationId);
       batch.delete(conversationRef);
 

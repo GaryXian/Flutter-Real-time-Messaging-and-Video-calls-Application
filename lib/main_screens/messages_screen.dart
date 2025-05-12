@@ -58,6 +58,14 @@ class _MessagesScreenState extends State<MessagesScreen> {
             contactId: 1, // Mark as unread for the recipient
           },
         });
+      } else {
+        // Update unread count if conversation already exists
+        await _firestore.collection('conversations').doc(conversationId).update({
+          'lastMessage': 'Conversation resumed',
+          'lastMessageTime': FieldValue.serverTimestamp(),
+          'unreadCount.$currentUserId': FieldValue.increment(1),
+          //'unreadCount.$contactId': FieldValue.increment(1),
+        });
       }
 
       if (!mounted) return;

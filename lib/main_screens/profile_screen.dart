@@ -1,12 +1,11 @@
 import 'dart:io';
-
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
-
+import 'package:mime/mime.dart';
 import '../screens/login_screen.dart';
 import '../sub_screens/settings_screen.dart';
 
@@ -27,33 +26,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   void initState() {
     super.initState();
-    _loadUserData();
+    _initializeUser();
   }
 
-  Future<void> _loadUserData() async {
-    setState(() => _isLoading = true);
+  Future<void> _initializeUser() async {
     _currentUser = _auth.currentUser;
-    
     if (_currentUser != null) {
       final userDoc = await _firestore.collection('users').doc(_currentUser!.uid).get();
       if (userDoc.exists) {
-        setState(() {
-          _userData = userDoc.data()!;
-          _isLoading = false;
-        });
+        _userData = userDoc.data()!;
       } else {
         await _createUserDocument();
       }
+      await _updateUserStatus('online');
     }
     setState(() => _isLoading = false);
   }
 
   Future<void> _createUserDocument() async {
     if (_currentUser == null) return;
-
     await _firestore.collection('users').doc(_currentUser!.uid).set({
       'uid': _currentUser!.uid,
       'email': _currentUser!.email,
+      'phone': _currentUser!.phoneNumber,
       'displayName': _currentUser!.displayName ?? 'New User',
       'photoURL': _currentUser!.photoURL ?? '',
       'createdAt': FieldValue.serverTimestamp(),
@@ -62,242 +57,195 @@ class _ProfileScreenState extends State<ProfileScreen> {
       'fcmToken': '',
       'bio': '',
     });
-
-    await _loadUserData();
+    _userData = (await _firestore.collection('users').doc(_currentUser!.uid).get()).data()!;
   }
 
-  Future<void> _updateProfilePicture() async {
-    final picker = ImagePicker();
-    final pickedFile = await picker.pickImage(source: ImageSource.gallery);
-
-    if (pickedFile != null && _currentUser != null) {
-      try {
-        // Upload to Firebase Storage
-        final ref = FirebaseStorage.instance
-            .ref()
-            .child('profile_pictures')
-            .child('${_currentUser!.uid}.jpg');
-
-        await ref.putFile(File(pickedFile.path));
-        final photoURL = await ref.getDownloadURL();
-
-        // Update Firebase Auth
-        await _currentUser!.updatePhotoURL(photoURL);
-
-        // Update Firestore
-        await _firestore.collection('users').doc(_currentUser!.uid).update({
-          'photoURL': photoURL,
-        });
-
-        await _loadUserData();
-      } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to update photo: ${e.toString()}')),
-        );
-      }
-    }
-  }
-
-  Future<void> _updateBio(BuildContext context) async {
-    final newBio = await showDialog<String>(
-      context: context,
-      builder: (context) {
-        final bioController = TextEditingController(text: _userData['bio'] ?? '');
-        return AlertDialog(
-          title: const Text('Edit Bio'),
-          content: TextField(
-            controller: bioController,
-            maxLength: 100,
-            decoration: const InputDecoration(hintText: 'Tell us about yourself'),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, bioController.text),
-              child: const Text('Save'),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (newBio != null && _currentUser != null) {
-      try {
-        await _firestore.collection('users').doc(_currentUser!.uid).update({
-          'bio': newBio,
-        });
-        await _loadUserData();
-      } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to update bio: ${e.toString()}')),
-        );
-      }
-    }
-  }
-
-  Future<void> _changeEmail() async {
-    final newEmail = await showDialog<String>(
-      context: context,
-      builder: (context) {
-        final emailController = TextEditingController(text: _userData['email'] ?? '');
-        return AlertDialog(
-          title: const Text('Change Email'),
-          content: TextField(
-            controller: emailController,
-            keyboardType: TextInputType.emailAddress,
-            decoration: const InputDecoration(hintText: 'Enter new email'),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, emailController.text),
-              child: const Text('Update'),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (newEmail != null && newEmail.isNotEmpty && _currentUser != null) {
-      try {
-        await _currentUser!.updateEmail(newEmail);
-        await _firestore.collection('users').doc(_currentUser!.uid).update({
-          'email': newEmail,
-        });
-        await _loadUserData();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Email updated successfully')),
-        );
-      } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to update email: ${e.toString()}')),
-        );
-      }
-    }
-  }
-
-  Future<void> _changePassword() async {
-    final newPassword = await showDialog<String>(
-      context: context,
-      builder: (context) {
-        final passController = TextEditingController();
-        return AlertDialog(
-          title: const Text('Change Password'),
-          content: TextField(
-            controller: passController,
-            obscureText: true,
-            decoration: const InputDecoration(hintText: 'Enter new password'),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, passController.text),
-              child: const Text('Update'),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (newPassword != null && newPassword.isNotEmpty && _currentUser != null) {
-      try {
-        await _currentUser!.updatePassword(newPassword);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Password updated successfully')),
-        );
-      } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to update password: ${e.toString()}')),
-        );
-      }
-    }
-  }
-  Future<void> _changeUsername(BuildContext context) async {
-  final nameController = TextEditingController(text: _userData['displayName'] ?? '');
-  final newName = await showDialog<String>(
-    context: context,
-    builder: (context) => AlertDialog(
-      title: const Text('Change Username'),
-      content: TextField(
-        controller: nameController,
-        decoration: const InputDecoration(hintText: 'Enter new username'),
-      ),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-        TextButton(onPressed: () => Navigator.pop(context, nameController.text), child: const Text('Save')),
-      ],
-    ),
-  );
-
-  if (newName != null && newName.isNotEmpty) {
-    try {
-      await _firestore.collection('users').doc(_currentUser!.uid).update({
-        'displayName': newName,
-      });
-      await _loadUserData();
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Username updated successfully')));
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to update username: ${e.toString()}')));
-    }
-  }
-}
-  Future<void> _updateUserStatus() async {
+  Future<void> _updateUserStatus(String status) async {
     if (_currentUser != null) {
       await _firestore.collection('users').doc(_currentUser!.uid).update({
-        'status': 'online',
+        'status': status,
         'lastActive': FieldValue.serverTimestamp(),
       });
     }
   }
 
-  void _logout(BuildContext context) async {
+  void _showSnackBar(String message, {bool error = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: error ? Colors.red : null),
+    );
+  }
+
+Future<void> _updateProfilePicture() async {
+  final picker = ImagePicker();
+  final pickedFile = await picker.pickImage(source: ImageSource.gallery);
+
+  if (pickedFile != null && _currentUser != null) {
+    try {
+      // Check the file type to ensure it's an image
+      final mimeType = lookupMimeType(pickedFile.path);
+      if (mimeType == null || !mimeType.startsWith('image')) {
+        _showSnackBar('Please select a valid image file.', error: true);
+        return;
+      }
+
+      // Optionally, compress the image to a manageable size
+      final File imageFile = File(pickedFile.path);
+
+      // Generate a reference for the profile picture in Firebase Storage
+      final ref = FirebaseStorage.instance.ref('profile_pictures/${_currentUser!.uid}.jpg');
+
+      // Upload the image to Firebase Storage
+      await ref.putFile(imageFile);
+
+      // Get the URL of the uploaded image
+      final photoURL = await ref.getDownloadURL();
+
+      // Update the user's photo URL in Firebase Authentication and Firestore
+      await _currentUser!.updatePhotoURL(photoURL);
+      await _firestore.collection('users').doc(_currentUser!.uid).update({'photoURL': photoURL});
+
+      // Update the local state with the new photo URL
+      setState(() => _userData['photoURL'] = photoURL);
+
+      // Show success message
+      _showSnackBar('Profile picture updated!');
+    } catch (e) {
+      // Catch any errors and display them in the snackbar
+      _showSnackBar('Failed to update photo: ${e.toString()}', error: true);
+    }
+  } else {
+    // Handle case where no image was selected or user is null
+    _showSnackBar('No image selected or user not logged in.', error: true);
+  }
+}
+
+
+  Future<void> _updateField(String title, String field, {bool isPassword = false, TextInputType? inputType}) async {
+    final controller = TextEditingController(text: _userData[field] ?? '');
+    final result = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: controller,
+          obscureText: isPassword,
+          keyboardType: inputType,
+          decoration: InputDecoration(hintText: 'Enter new ${field.toLowerCase()}'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: const Text('Save')),
+        ],
+      ),
+    );
+
+    if (result != null && result.isNotEmpty && _currentUser != null) {
+      try {
+        if (field == 'email') {
+          await _currentUser!.updateEmail(result);
+        } else if (isPassword) {
+          await _currentUser!.updatePassword(result);
+        }
+
+        if (!isPassword) {
+          await _firestore.collection('users').doc(_currentUser!.uid).update({field: result});
+          setState(() => _userData[field] = result);
+        }
+
+        _showSnackBar('$title updated successfully!');
+      } catch (e) {
+        _showSnackBar('Failed to update $field: ${e.toString()}', error: true);
+      }
+    }
+  }
+
+  Future<void> _changePhone() async {
+    final controller = TextEditingController(text: _userData['phone'] ?? '');
+    final newPhone = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Change Phone Number'),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.phone,
+          decoration: const InputDecoration(hintText: '+1234567890'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: const Text('Verify')),
+        ],
+      ),
+    );
+
+    if (newPhone != null && newPhone.isNotEmpty && _currentUser != null) {
+      try {
+        await _auth.verifyPhoneNumber(
+          phoneNumber: newPhone,
+          verificationCompleted: (credential) async {
+            await _currentUser!.updatePhoneNumber(credential);
+            await _updateFirestorePhone(newPhone);
+          },
+          verificationFailed: (e) {
+            _showSnackBar('Verification failed: ${e.message}', error: true);
+          },
+          codeSent: (verificationId, _) => _showOtpDialog(verificationId, newPhone),
+          codeAutoRetrievalTimeout: (_) {},
+        );
+      } catch (e) {
+        _showSnackBar('Error: ${e.toString()}', error: true);
+      }
+    }
+  }
+
+  void _showOtpDialog(String verificationId, String newPhone) {
+    final controller = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Enter SMS Code'),
+        content: TextField(controller: controller, keyboardType: TextInputType.number, decoration: const InputDecoration(hintText: '6-digit code')),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () async {
+              final code = controller.text.trim();
+              if (code.isNotEmpty) {
+                final credential = PhoneAuthProvider.credential(verificationId: verificationId, smsCode: code);
+                await _currentUser!.updatePhoneNumber(credential);
+                await _updateFirestorePhone(newPhone);
+                Navigator.pop(context);
+              }
+            },
+            child: const Text('Submit'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _updateFirestorePhone(String newPhone) async {
+    await _firestore.collection('users').doc(_currentUser!.uid).update({'phone': newPhone});
+    setState(() => _userData['phone'] = newPhone);
+    _showSnackBar('Phone number updated successfully!');
+  }
+
+  Future<void> _logout() async {
     final confirm = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Logout"),
-        content: const Text("Are you sure you want to logout?"),
+      builder: (_) => AlertDialog(
+        title: const Text('Logout'),
+        content: const Text('Are you sure you want to logout?'),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text("Cancel"),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text("Logout"),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Logout')),
         ],
       ),
     );
 
     if (confirm == true) {
-      try {
-        // Update user status before logging out
-        if (_currentUser != null) {
-          await _firestore.collection('users').doc(_currentUser!.uid).update({
-            'status': 'offline',
-            'lastActive': FieldValue.serverTimestamp(),
-          });
-        }
-
-        await _auth.signOut();
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (context) => const LoginScreen()),
-          (Route<dynamic> route) => false,
-        );
-      } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Logout failed: ${e.toString()}')),
-        );
-      }
+      await _updateUserStatus('offline');
+      await _auth.signOut();
+      Navigator.of(context).pushAndRemoveUntil(MaterialPageRoute(builder: (_) => const LoginScreen()), (route) => false);
     }
   }
 
@@ -308,15 +256,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         elevation: 0,
         automaticallyImplyLeading: false,
         actions: [
-          IconButton(
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const SettingsScreen()),
-              );
-            },
-            icon: const Icon(Icons.settings),
-          ),
+          IconButton(icon: const Icon(Icons.settings), onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()))),
         ],
       ),
       body: _isLoading
@@ -332,48 +272,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Widget _buildProfileHeader() {
     return Padding(
-      padding: const EdgeInsets.all(16.0),
+      padding: const EdgeInsets.all(16),
       child: Row(
         children: [
           GestureDetector(
             onTap: _updateProfilePicture,
             child: CircleAvatar(
               radius: 30,
-              backgroundImage: _userData['photoURL'] != null &&
-                      _userData['photoURL'].isNotEmpty
-                  ? NetworkImage(_userData['photoURL'])
-                  : null,
-              child: _userData['photoURL'] == null ||
-                      _userData['photoURL'].isEmpty
-                  ? const Icon(Icons.person, size: 30)
-                  : null,
+              backgroundImage: (_userData['photoURL']?.isNotEmpty ?? false) ? NetworkImage(_userData['photoURL']) : null,
+              child: (_userData['photoURL']?.isEmpty ?? true) ? const Icon(Icons.person, size: 30) : null,
             ),
           ),
           const SizedBox(width: 20),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                _userData['displayName'] ?? 'No Name',
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
+              Text(_userData['displayName'] ?? 'No Name', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 4),
               InkWell(
-                onTap: () => _updateBio(context),
+                onTap: () => _updateField('Edit Bio', 'bio'),
                 child: Text(
-                  _userData['bio']?.isNotEmpty == true
-                      ? _userData['bio']
-                      : 'Add a bio',
+                  (_userData['bio']?.isNotEmpty ?? false) ? _userData['bio'] : 'Add a bio',
                   style: TextStyle(
-                    color: _userData['bio']?.isNotEmpty == true
-                        ? Colors.black87
-                        : Colors.blue,
-                    decoration: _userData['bio']?.isNotEmpty == true
-                        ? TextDecoration.none
-                        : TextDecoration.underline,
+                    color: (_userData['bio']?.isNotEmpty ?? false) ? Colors.black87 : Colors.blue,
+                    decoration: (_userData['bio']?.isNotEmpty ?? false) ? TextDecoration.none : TextDecoration.underline,
                   ),
                 ),
               ),
@@ -387,144 +309,84 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _buildMenuItems() {
     return Column(
       children: [
-        ListTile(
-          leading: const Icon(Icons.person),
-          title: const Text('Personal Information'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => _showPersonalInfo(context),
-        ),
-        const Divider(),
-        ListTile(
-          leading: const Icon(Icons.security),
-          title: const Text('Account Security'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => _showAccountSecurity(context),
-        ),
-        const Divider(),
-        ListTile(
-          leading: const Icon(Icons.help),
-          title: const Text('Help & Support'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => _showHelpSupport(context),
-        ),
-        const Divider(),
-        ListTile(
-          leading: const Icon(Icons.exit_to_app),
-          title: const Text('Logout'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => _logout(context),
-        ),
+        _buildMenuTile(Icons.person, 'Personal Information', _showPersonalInfo),
+        _buildMenuTile(Icons.security, 'Account Security', _showAccountSecurity),
+        _buildMenuTile(Icons.help, 'Help & Support', _showHelpSupport),
+        _buildMenuTile(Icons.exit_to_app, 'Logout', _logout),
       ],
     );
   }
 
-  void _showPersonalInfo(BuildContext context) {
+  ListTile _buildMenuTile(IconData icon, String title, Function() onTap) {
+    return ListTile(
+      leading: Icon(icon),
+      title: Text(title),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: onTap,
+    );
+  }
+
+  void _showPersonalInfo() {
     showModalBottomSheet(
       context: context,
-      builder: (_) => Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Personal Information', 
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            _buildInfoRow('Name', _userData['displayName'] ?? 'Not set'),
-            _buildInfoRow('Email', _userData['email'] ?? 'Not set'),
-            _buildInfoRow(
-              'Account Created',
-              _userData['createdAt'] != null
-                  ? DateFormat.yMMMd().format((_userData['createdAt'] as Timestamp).toDate())
-                  : 'Unknown',
-            ),
-            _buildInfoRow('Status', _userData['status'] ?? 'invisible'),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context), 
-              child: const Text('Close')),
-          ],
-        ),
+      builder: (_) => _buildBottomSheetContent(
+        title: 'Personal Information',
+        children: [
+          _buildInfoRow('Name', _userData['displayName']),
+          _buildInfoRow('Email', _userData['email']),
+          _buildInfoRow('Account Created', _userData['createdAt'] != null ? DateFormat.yMMMd().format((_userData['createdAt'] as Timestamp).toDate()) : 'Unknown'),
+          _buildInfoRow('Status', _userData['status']),
+        ],
       ),
     );
   }
 
-  void _showAccountSecurity(BuildContext context) {
+  void _showAccountSecurity() {
     showModalBottomSheet(
       context: context,
-      builder: (_) => Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Account Security', 
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            ListTile(
-              leading: const Icon(Icons.email),
-              title: const Text('Change Email'),
-              onTap: () {
-                Navigator.pop(context);
-                _changeEmail();
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.lock),
-              title: const Text('Change Password'),
-              onTap: () {
-                Navigator.pop(context);
-                _changePassword();
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.person),
-              title: const Text('Change Username'),
-              onTap: () {
-                Navigator.pop(context);
-                _changeUsername(context);
-              },
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context), 
-              child: const Text('Close')),
-          ],
-        ),
+      builder: (_) => _buildBottomSheetContent(
+        title: 'Account Security',
+        children: [
+          _buildMenuTile(Icons.email, 'Change Email', () => _updateField('Change Email', 'email', inputType: TextInputType.emailAddress)),
+          _buildMenuTile(Icons.phone, 'Change Phone Number', _changePhone),
+          _buildMenuTile(Icons.lock, 'Change Password', () => _updateField('Change Password', 'password', isPassword: true)),
+          _buildMenuTile(Icons.person, 'Change Username', () => _updateField('Change Username', 'displayName')),
+        ],
       ),
     );
   }
 
-  void _showHelpSupport(BuildContext context) {
-    showModalBottomSheet(
+  void _showHelpSupport() {
+    showDialog(
       context: context,
-      builder: (_) => Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Help & Support', 
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            const Text('Contact us at support@example.com'),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context), 
-              child: const Text('Close')),
-          ],
-        ),
+      builder: (_) => AlertDialog(
+        title: const Text('Help & Support'),
+        content: const Text('For support, please contact support@example.com.'),
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close'))],
       ),
     );
   }
 
-  Widget _buildInfoRow(String label, String value) {
+  Widget _buildBottomSheetContent({required String title, required List<Widget> children}) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      padding: const EdgeInsets.all(16),
+      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 16),
+        ...children,
+        const SizedBox(height: 16),
+        ElevatedButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
+      ]),
+    );
+  }
+
+  Widget _buildInfoRow(String label, String? value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
           Text('$label: ', style: const TextStyle(fontWeight: FontWeight.bold)),
-          Text(value),
+          Flexible(child: Text(value ?? 'Not set')),
         ],
       ),
     );
