@@ -244,6 +244,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
               const SizedBox(height: 30),
               ElevatedButton(
                 onPressed: _isRegistering ? null : _registerUser,
+                style: ElevatedButton.styleFrom(
+                  minimumSize: Size.fromHeight(55),
+                  backgroundColor: Colors.blue,
+                ),
                 child: _isRegistering
                     ? const CircularProgressIndicator()
                     : const Text(
@@ -254,10 +258,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         fontWeight: FontWeight.bold
                       ),
                     ),
-                style: ElevatedButton.styleFrom(
-                  minimumSize: Size.fromHeight(55),
-                  backgroundColor: Colors.blue,
-                ),
               ),
               const SizedBox(height: 10,),
               Row(

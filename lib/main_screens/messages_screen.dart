@@ -13,9 +13,10 @@ class MessagesScreen extends StatefulWidget {
 
 class _MessagesScreenState extends State<MessagesScreen> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final Map<String, Map<String, dynamic>> _userCache = {};
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final TextEditingController _searchController = TextEditingController();
+
+  final Map<String, Map<String, dynamic>> _userCache = {};
   List<Map<String, dynamic>> _availableUsers = [];
   bool _isLoadingUsers = false;
 
@@ -25,46 +26,43 @@ class _MessagesScreenState extends State<MessagesScreen> {
         : '${userId2}_$userId1';
   }
 
-  Future<void> _startNewConversation(
-    String contactId,
-    String contactName,
-  ) async {
-    final currentUserId = _auth.currentUser?.uid;
-    if (currentUserId == null) return;
+  Future<void> _startNewConversation(String contactId, String contactName) async {
+    final currentUser = _auth.currentUser;
+    if (currentUser == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please sign in first')),
+      );
+      return;
+    }
 
-    final conversationId = _generateConversationId(currentUserId, contactId);
+    final conversationId = _generateConversationId(currentUser.uid, contactId);
 
     try {
-      // Check if conversation exists
-      final conversationDoc =
-          await _firestore
-              .collection('conversations')
-              .doc(conversationId)
-              .get();
+      final contactDoc = await _firestore.collection('users').doc(contactId).get();
+      if (!contactDoc.exists) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('User not found')),
+        );
+        return;
+      }
+
+      final conversationDoc = await _firestore.collection('conversations').doc(conversationId).get();
 
       if (!conversationDoc.exists) {
         await _firestore.collection('conversations').doc(conversationId).set({
-          'conversationId': conversationId,
-          'participants': [currentUserId, contactId],
+          'participants': [currentUser.uid, contactId],
           'participantNames': {
-            currentUserId: _auth.currentUser?.displayName ?? 'You',
+            currentUser.uid: currentUser.displayName ?? 'You',
             contactId: contactName,
           },
-          'lastMessage': 'Conversation started',
+          'lastMessage': '',
+          'lastMessageType': '',
           'lastMessageTime': FieldValue.serverTimestamp(),
-          'createdAt': FieldValue.serverTimestamp(),
-          'unreadCount': {
-            currentUserId: 0,
-            contactId: 1, // Mark as unread for the recipient
-          },
-        });
-      } else {
-        // Update unread count if conversation already exists
-        await _firestore.collection('conversations').doc(conversationId).update({
-          'lastMessage': 'Conversation resumed',
-          'lastMessageTime': FieldValue.serverTimestamp(),
-          'unreadCount.$currentUserId': FieldValue.increment(1),
-          //'unreadCount.$contactId': FieldValue.increment(1),
+          'unreadCount': {currentUser.uid: 0, contactId: 0},
+          'type': 'private',
+          'updatedAt': FieldValue.serverTimestamp(), // fixed to camelCase
         });
       }
 
@@ -73,39 +71,47 @@ class _MessagesScreenState extends State<MessagesScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to start conversation: ${e.toString()}'),
-        ),
+        SnackBar(content: Text('Failed to start conversation: ${e.toString()}')),
       );
     }
   }
 
-  void _openChatRoom(
-    BuildContext context,
-    String contactId,
-    String contactName,
-    String conversationId,
-  ) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder:
-            (ctx) => ChatScreen(
-              conversationId: conversationId,
-              participants: [_auth.currentUser!.uid, contactId],
-            ),
-      ),
-    );
-  }
+  Future<void> _openChatRoom(BuildContext context, String contactId, String contactName, String conversationId) async {
+    final currentUserId = _auth.currentUser?.uid;
+    if (currentUserId == null) return;
 
-  Future<Map<String, dynamic>> _getUserInfo(String userId) async {
-    if (_userCache.containsKey(userId)) {
-      return _userCache[userId]!;
+    try {
+      final conversationDoc = await _firestore.collection('conversations').doc(conversationId).get();
+
+      if (!conversationDoc.exists ||
+          !(conversationDoc.data()?['participants'] as List).contains(currentUserId)) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Conversation not found')),
+        );
+        return;
+      }
+
+      // Reset unreadCount for current user
+      await _firestore.collection('conversations').doc(conversationId).update({
+        'unreadCount.$currentUserId': 0,
+      });
+
+      if (!mounted) return;
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (ctx) => ChatScreen(
+            conversationId: conversationId,
+            participants: [currentUserId, contactId],
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error opening chat: ${e.toString()}')),
+      );
     }
-
-    final doc = await _firestore.collection('users').doc(userId).get();
-    final data = doc.data() ?? {};
-    _userCache[userId] = data;
-    return data;
   }
 
   Future<void> _loadFriends() async {
@@ -114,48 +120,52 @@ class _MessagesScreenState extends State<MessagesScreen> {
 
     setState(() => _isLoadingUsers = true);
     try {
-      // Get friend list from subcollection users/{uid}/friends
-      final friendsSnapshot =
-          await _firestore
-              .collection('users')
-              .doc(currentUserId)
-              .collection('friends')
-              .get();
+      final friendsSnapshot = await _firestore
+          .collection('users')
+          .doc(currentUserId)
+          .collection('friends')
+          .get();
 
       final friendIds = friendsSnapshot.docs.map((doc) => doc.id).toSet();
 
-      // Get users info of friends
-      final friendsData = await Future.wait(
-        friendIds.map((id) => _firestore.collection('users').doc(id).get()),
-      );
+      if (friendIds.isEmpty) {
+        setState(() {
+          _availableUsers = [];
+        });
+        return;
+      }
 
-      // Get existing conversations
-      final conversationsSnapshot =
-          await _firestore
-              .collection('conversations')
-              .where('participants', arrayContains: currentUserId)
-              .get();
+      final usersQuery = await _firestore
+          .collection('users')
+          .where(FieldPath.documentId, whereIn: friendIds.toList())
+          .get();
 
-      final existingContacts =
-          conversationsSnapshot.docs
-              .expand(
-                (doc) => (doc.data()['participants'] as List).cast<String>(),
-              )
-              .where((id) => id != currentUserId)
-              .toSet();
+      // Preload user info into cache
+      for (var doc in usersQuery.docs) {
+        _userCache[doc.id] = doc.data();
+      }
+
+      final conversationsSnapshot = await _firestore
+          .collection('conversations')
+          .where('participants', arrayContains: currentUserId)
+          .get();
+
+      final existingContacts = conversationsSnapshot.docs
+          .expand((doc) => (doc.data()['participants'] as List).cast<String>())
+          .where((id) => id != currentUserId)
+          .toSet();
 
       setState(() {
-        _availableUsers =
-            friendsData.where((doc) => doc.exists).map((doc) {
-              final data = doc.data()!;
-              return {
-                'uid': doc.id,
-                'displayName': data['displayName'] ?? 'Unknown',
-                'email': data['email'] ?? '',
-                'photoURL': data['photoURL'] ?? '',
-                'hasConversation': existingContacts.contains(doc.id),
-              };
-            }).toList();
+        _availableUsers = usersQuery.docs.where((doc) => doc.exists).map((doc) {
+          final data = doc.data();
+          return {
+            'uid': doc.id,
+            'displayName': data['displayName'] ?? 'Unknown',
+            'email': data['email'] ?? '',
+            'photoURL': data['photoURL'] ?? '',
+            'hasConversation': existingContacts.contains(doc.id),
+          };
+        }).toList();
       });
     } catch (e) {
       if (!mounted) return;
@@ -165,6 +175,10 @@ class _MessagesScreenState extends State<MessagesScreen> {
     } finally {
       setState(() => _isLoadingUsers = false);
     }
+  }
+
+  Map<String, dynamic> _getCachedUserInfo(String userId) {
+    return _userCache[userId] ?? {'displayName': 'Unknown'};
   }
 
   @override
@@ -192,12 +206,11 @@ class _MessagesScreenState extends State<MessagesScreen> {
         ],
       ),
       body: StreamBuilder<QuerySnapshot>(
-        stream:
-            _firestore
-                .collection('conversations')
-                .where('participants', arrayContains: currentUserId)
-                .orderBy('lastMessageTime', descending: true)
-                .snapshots(),
+        stream: _firestore
+            .collection('conversations')
+            .where('participants', arrayContains: currentUserId)
+            .orderBy('lastMessageTime', descending: true)
+            .snapshots(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
@@ -218,15 +231,10 @@ class _MessagesScreenState extends State<MessagesScreen> {
             );
           }
 
-          final conversations =
-              snapshot.data!.docs
-                  .map(
-                    (doc) => {
-                      'id': doc.id,
-                      ...doc.data() as Map<String, dynamic>,
-                    },
-                  )
-                  .toList();
+          final conversations = snapshot.data!.docs.map((doc) {
+            return {'id': doc.id, ...doc.data() as Map<String, dynamic>};
+          }).toList();
+
           return ListView.builder(
             itemCount: conversations.length,
             itemBuilder: (ctx, index) {
@@ -237,70 +245,54 @@ class _MessagesScreenState extends State<MessagesScreen> {
                 orElse: () => '',
               );
 
-              return FutureBuilder<Map<String, dynamic>>(
-                future: _getUserInfo(otherUserId),
-                builder: (context, userSnapshot) {
-                  if (!userSnapshot.hasData) {
-                    return const ListTile(
-                      leading: CircleAvatar(child: Icon(Icons.person)),
-                    );
-                  }
+              final userData = _getCachedUserInfo(otherUserId);
 
-                  final userData = userSnapshot.data!;
-                  return ListTile(
-                    leading: CircleAvatar(
-                      backgroundImage:
-                          userData['photoURL'] != null
-                              ? NetworkImage(userData['photoURL'])
-                              : null,
-                      child:
-                          userData['photoURL'] == null
-                              ? const Icon(Icons.person)
-                              : null,
+              return ListTile(
+                leading: CircleAvatar(
+                  backgroundImage: userData['photoURL'] != null && userData['photoURL'] != ''
+                      ? NetworkImage(userData['photoURL'])
+                      : null,
+                  child: (userData['photoURL'] == null || userData['photoURL'] == '')
+                      ? const Icon(Icons.person)
+                      : null,
+                ),
+                title: Text(userData['displayName'] ?? 'Unknown'),
+                subtitle: Text(
+                  (convo['lastMessage'] as String?)?.isNotEmpty == true
+                      ? convo['lastMessage']
+                      : 'No messages yet',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                trailing: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      _formatTimestamp(convo['lastMessageTime'] as Timestamp?),
+                      style: const TextStyle(fontSize: 12),
                     ),
-                    title: Text(userData['displayName'] ?? 'Unknown'),
-                    subtitle: Text(
-                      convo['lastMessage'] ?? 'No messages yet',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    trailing: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text(
-                          _formatTimestamp(
-                            convo['lastMessageTime'] as Timestamp?,
-                          ),
-                          style: const TextStyle(fontSize: 12),
+                    if (convo['unreadCount']?[currentUserId] != null &&
+                        convo['unreadCount'][currentUserId] > 0)
+                      Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: const BoxDecoration(
+                          color: Colors.blue,
+                          shape: BoxShape.circle,
                         ),
-                        if (convo['unreadCount']?[currentUserId] != null &&
-                            convo['unreadCount'][currentUserId] > 0)
-                          Container(
-                            padding: const EdgeInsets.all(4),
-                            decoration: const BoxDecoration(
-                              color: Colors.blue,
-                              shape: BoxShape.circle,
-                            ),
-                            child: Text(
-                              convo['unreadCount'][currentUserId].toString(),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                    onTap:
-                        () => _openChatRoom(
-                          context,
-                          otherUserId,
-                          userData['displayName'] ?? 'Unknown',
-                          convo['id'],
+                        child: Text(
+                          convo['unreadCount'][currentUserId].toString(),
+                          style: const TextStyle(color: Colors.white, fontSize: 12),
                         ),
-                  );
-                },
+                      ),
+                  ],
+                ),
+                onTap: () => _openChatRoom(
+                  context,
+                  otherUserId,
+                  userData['displayName'] ?? 'Unknown',
+                  convo['id'],
+                ),
               );
             },
           );
@@ -309,15 +301,12 @@ class _MessagesScreenState extends State<MessagesScreen> {
     );
   }
 
-
   String _formatTimestamp(Timestamp? timestamp) {
     if (timestamp == null) return '';
     final date = timestamp.toDate();
     final now = DateTime.now();
 
-    if (date.year == now.year &&
-        date.month == now.month &&
-        date.day == now.day) {
+    if (date.year == now.year && date.month == now.month && date.day == now.day) {
       return DateFormat('HH:mm').format(date);
     }
     return DateFormat('MMM d').format(date);
@@ -328,78 +317,59 @@ class _MessagesScreenState extends State<MessagesScreen> {
 
     showDialog(
       context: context,
-      builder:
-          (ctx) => AlertDialog(
-            title: const Text('New Conversation'),
-            content: SizedBox(
-              width: double.maxFinite,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _isLoadingUsers
-                      ? const Center(child: CircularProgressIndicator())
-                      : _availableUsers.isEmpty
-                      ? const Padding(
-                        padding: EdgeInsets.all(16.0),
-                        child: Text('No friends available'),
-                      )
-                      : Expanded(
-                        child: ListView.builder(
-                          shrinkWrap: true,
-                          itemCount: _availableUsers.length,
-                          itemBuilder: (ctx, index) {
-                            final user = _availableUsers[index];
-                            final alreadyChatted =
-                                user['hasConversation'] == true;
+      builder: (ctx) => AlertDialog(
+        title: const Text('New Conversation'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: _isLoadingUsers
+              ? const Center(child: CircularProgressIndicator())
+              : _availableUsers.isEmpty
+                  ? const Padding(
+                      padding: EdgeInsets.all(16.0),
+                      child: Text('No friends available'),
+                    )
+                  : ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: _availableUsers.length,
+                      itemBuilder: (ctx, index) {
+                        final user = _availableUsers[index];
+                        final alreadyChatted = user['hasConversation'] == true;
 
-                            return ListTile(
-                              leading: CircleAvatar(
-                                backgroundImage:
-                                    user['photoURL'] != null
-                                        ? NetworkImage(user['photoURL'])
-                                        : null,
-                                child:
-                                    user['photoURL'] == null
-                                        ? const Icon(Icons.person)
-                                        : null,
-                              ),
-                              title: Text(user['displayName'] ?? 'Unknown'),
-                              subtitle: Text(user['email'] ?? ''),
-                              trailing:
-                                  alreadyChatted
-                                      ? const Text(
-                                        'Already chatted',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: Colors.grey,
-                                        ),
-                                      )
-                                      : null,
-                              enabled: !alreadyChatted,
-                              onTap:
-                                  alreadyChatted
-                                      ? null
-                                      : () {
-                                        Navigator.pop(ctx);
-                                        _startNewConversation(
-                                          user['uid'],
-                                          user['displayName'] ?? 'Unknown',
-                                        );
-                                      },
-                            );
-                          },
-                        ),
-                      ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Cancel'),
-              ),
-            ],
+                        return ListTile(
+                          leading: CircleAvatar(
+                            backgroundImage: user['photoURL'] != null && user['photoURL'] != ''
+                                ? NetworkImage(user['photoURL'])
+                                : null,
+                            child: (user['photoURL'] == null || user['photoURL'] == '')
+                                ? const Icon(Icons.person)
+                                : null,
+                          ),
+                          title: Text(user['displayName'] ?? 'Unknown'),
+                          subtitle: Text(user['email'] ?? ''),
+                          trailing: alreadyChatted
+                              ? const Icon(Icons.chat_bubble, color: Colors.grey, size: 16)
+                              : null,
+                          enabled: !alreadyChatted,
+                          onTap: alreadyChatted
+                              ? null
+                              : () {
+                                  Navigator.pop(ctx);
+                                  _startNewConversation(
+                                    user['uid'],
+                                    user['displayName'] ?? 'Unknown',
+                                  );
+                                },
+                        );
+                      },
+                    ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
           ),
+        ],
+      ),
     );
   }
 
