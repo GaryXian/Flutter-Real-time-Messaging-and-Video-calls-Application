@@ -8,7 +8,7 @@ import 'home/home.dart';
 import 'main_screens/friends_screen.dart';
 import 'main_screens/messages_screen.dart';
 import 'main_screens/profile_screen.dart';
-import 'screens/login_screen.dart';
+import 'authentication_screens/login_screen.dart';
 import 'sub_screens/settings_screen.dart';
 import 'sub_screens/test_call.dart';
 import 'sub_screens/test_message.dart';

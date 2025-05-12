@@ -136,53 +136,83 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Register")),
+      appBar: AppBar(
+        toolbarHeight: 100,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              "Sign Up",
+              style: TextStyle(
+                fontSize: 30,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const Text(
+              'Welcome, our new user!',
+              style: TextStyle(
+                fontSize: 14,
+              ),
+            )
+          ],
+        ),
+        automaticallyImplyLeading: false,
+      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Form(
           key: _formKey,
           child: Column(
             children: [
+              SizedBox(height: 10,),
               TextFormField(
                 controller: emailController,
-                decoration: _inputDecoration("Email", Icons.email),
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.email),
+                  labelText: "Email",
+                  hintText: 'Enter an email',
+                ),
                 keyboardType: TextInputType.emailAddress,
                 validator: (value) {
-                  if (value == null || value.isEmpty) return 'Enter your email';
-                  final emailRegex = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$');
-                  if (!emailRegex.hasMatch(value)) return 'Enter a valid email';
+                  if (value == null || value.isEmpty) {
+                    return 'Please enter an email';
+                  }
+                  if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(value)) {
+                    return 'Please enter a valid email';
+                  }
                   return null;
                 },
               ),
-              const SizedBox(height: 10),
-
-              TextFormField(
-                controller: phoneController,
-                decoration: _inputDecoration("Phone Number", Icons.phone),
-                keyboardType: TextInputType.phone,
-                validator: (value) {
-                  if (value == null || value.isEmpty) return 'Enter your phone number';
-                  final phoneRegex = RegExp(r'^\+?\d{7,15}$');
-                  if (!phoneRegex.hasMatch(value)) return 'Enter a valid phone number';
-                  return null;
-                },
-              ),
-              const SizedBox(height: 10),
-
+              const SizedBox(height: 10,),
               TextFormField(
                 controller: displayNameController,
-                decoration: _inputDecoration("Display Name", Icons.person),
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.person),
+                  labelText: "Username",
+                  hintText: 'What would you like to be called?'
+                ),
                 validator: (value) {
-                  if (value == null || value.isEmpty) return 'Enter a display name';
-                  if (value.length < 3) return 'Name must be at least 3 characters';
+                  if (value == null || value.isEmpty) {
+                    return 'Please enter a username name';
+                  }
+                  if (value.length < 3) {
+                    return 'Name must be at least 3 characters';
+                  }
                   return null;
                 },
               ),
-              const SizedBox(height: 10),
-
+              const SizedBox(height: 10,),
               TextFormField(
+                keyboardType: TextInputType.visiblePassword,
                 controller: passwordController,
-                decoration: _inputDecoration("Password", Icons.lock),
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.lock),
+                  labelText: "Password",
+                  hintText: 'Enter a password (6-16 characters)'
+                ),
                 obscureText: true,
                 validator: (value) {
                   if (value == null || value.isEmpty) return 'Enter a password';
@@ -190,29 +220,71 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   return null;
                 },
               ),
-              const SizedBox(height: 10),
-
+              const SizedBox(height: 10,),
               TextFormField(
+                keyboardType: TextInputType.visiblePassword,
                 controller: confirmPasswordController,
-                decoration: _inputDecoration("Confirm Password", Icons.lock_outline),
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.check),
+                  labelText: "Confirm Password",
+                  hintText: 'Enter your password (6-16 characters)'
+                ),
                 obscureText: true,
                 validator: (value) {
-                  if (value == null || value.isEmpty) return 'Confirm your password';
+                  if (value == null || value.isEmpty) {
+                    return 'Please enter a password';
+                  }
+                  if (value != passwordController.text) {
+                    return 'Passwords do not match';
+                  }
                   return null;
                 },
               ),
-              const SizedBox(height: 20),
-
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: ElevatedButton(
-                  onPressed: _isRegistering ? null : _registerUser,
-                  child: _isRegistering
-                      ? const CircularProgressIndicator(color: Colors.white)
-                      : const Text("Register"),
+              const SizedBox(height: 30),
+              ElevatedButton(
+                onPressed: _isRegistering ? null : _registerUser,
+                child: _isRegistering
+                    ? const CircularProgressIndicator()
+                    : const Text(
+                      "Sign up",
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold
+                      ),
+                    ),
+                style: ElevatedButton.styleFrom(
+                  minimumSize: Size.fromHeight(55),
+                  backgroundColor: Colors.blue,
                 ),
               ),
+              const SizedBox(height: 10,),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    'Already have an account?',
+                    style: TextStyle(
+                      fontStyle: FontStyle.italic
+                    ),
+                  ),
+                  SizedBox(width: 5,),
+                  InkWell(
+                    onTap: () {
+                      Navigator.pop(context);
+                    },
+                    child: const Text(
+                      'Sign In',
+                      style: TextStyle(
+                        color: Colors.blue,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 18,
+                      ),
+                    ),
+                  ),
+                ],
+              )
             ],
           ),
         ),

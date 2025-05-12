@@ -6,8 +6,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:mime/mime.dart';
-import '../screens/login_screen.dart';
+import '../authentication_screens/login_screen.dart';
 import '../sub_screens/settings_screen.dart';
+
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -232,12 +233,18 @@ Future<void> _updateProfilePicture() async {
   Future<void> _logout() async {
     final confirm = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Logout'),
-        content: const Text('Are you sure you want to logout?'),
+      builder: (ctx) => AlertDialog(
+        title: const Text("Log out"),
+        content: const Text("Are you sure you want to log out?"),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Logout')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text("Log out"),
+          ),
         ],
       ),
     );
@@ -309,10 +316,33 @@ Future<void> _updateProfilePicture() async {
   Widget _buildMenuItems() {
     return Column(
       children: [
-        _buildMenuTile(Icons.person, 'Personal Information', _showPersonalInfo),
-        _buildMenuTile(Icons.security, 'Account Security', _showAccountSecurity),
-        _buildMenuTile(Icons.help, 'Help & Support', _showHelpSupport),
-        _buildMenuTile(Icons.exit_to_app, 'Logout', _logout),
+        ListTile(
+          leading: const Icon(Icons.person),
+          title: const Text('Personal Information'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => _showPersonalInfo(),
+        ),
+        const Divider(),
+        ListTile(
+          leading: const Icon(Icons.security),
+          title: const Text('Account Security'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => _showAccountSecurity(),
+        ),
+        const Divider(),
+        ListTile(
+          leading: const Icon(Icons.help),
+          title: const Text('Help & Support'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => _showHelpSupport(),
+        ),
+        const Divider(),
+        ListTile(
+          leading: const Icon(Icons.exit_to_app),
+          title: const Text('Log Out'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => _logout(),
+        ),
       ],
     );
   }
@@ -359,10 +389,22 @@ Future<void> _updateProfilePicture() async {
   void _showHelpSupport() {
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Help & Support'),
-        content: const Text('For support, please contact support@example.com.'),
-        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close'))],
+      builder: (_) => Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Help & Support', 
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 16),
+            const Text('Contact us at 521K0008@student.tdtu.edu.vn'),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context), 
+              child: const Text('Close')),
+          ],
+        ),
       ),
     );
   }

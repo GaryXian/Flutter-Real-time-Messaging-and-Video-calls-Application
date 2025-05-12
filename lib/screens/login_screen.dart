@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:realtime_message_calling/home/home.dart';
-import 'register_screen.dart';
+import '../authentication_screens/register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -151,7 +151,7 @@ class _LoginScreenState extends State<LoginScreen> {
       'friendRequest': true,
       'lastUpdated': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
-    
+
     final friendsRef = userRef.collection('friends').doc(user.uid);
     batch.set(friendsRef, {
       'uid': user.uid,
