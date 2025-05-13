@@ -151,7 +151,7 @@ class _LoginScreenState extends State<LoginScreen> {
       });
     }
 
-  Future<void> _createUserStructures(User user) async {
+  Future<void> createUserStructures(User user) async {
     final batch = _firestore.batch();
     final userRef = _firestore.collection('users').doc(user.uid);
 

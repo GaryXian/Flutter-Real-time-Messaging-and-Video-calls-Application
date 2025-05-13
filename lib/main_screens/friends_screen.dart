@@ -30,11 +30,12 @@ class _ContactsScreenState extends State<ContactsScreen> {
     if (currentUser == null) return;
 
     try {
-      final friendsSnapshot = await _firestore
-          .collection('users')
-          .doc(currentUser.uid)
-          .collection('friends')
-          .get();
+      final friendsSnapshot =
+          await _firestore
+              .collection('users')
+              .doc(currentUser.uid)
+              .collection('friends')
+              .get();
 
       final friends = friendsSnapshot.docs.map((doc) => doc.data()).toList();
       setState(() => _friendsList = friends);
@@ -46,7 +47,9 @@ class _ContactsScreenState extends State<ContactsScreen> {
   }
 
   void _showSnack(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _searchUsers(String query) async {
@@ -61,72 +64,195 @@ class _ContactsScreenState extends State<ContactsScreen> {
     }
   }
 
-  Future<void> _sendFriendRequest(String userId) async {
+  String _generateRequestId(String senderId, String receiverId) {
+    return '${senderId}_$receiverId';
+  }
+
+  Future<void> _sendFriendRequest(String userId, String userName) async {
     final currentUser = _auth.currentUser;
-    if (currentUser == null || userId == currentUser.uid) {
-      _showSnack('Invalid user');
+    if (currentUser == null) {
+      _showSnack('You must be logged in');
       return;
     }
 
+    if (userId == currentUser.uid) {
+      _showSnack('You cannot send a request to yourself');
+      return;
+    }
+    // Show confirmation dialog
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder:
+          (ctx) => AlertDialog(
+            title: const Text('Send Friend Request'),
+            content: Text('Do you want to send a friend request to $userName?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Send'),
+              ),
+            ],
+          ),
+    );
+
+    if (confirm != true) return;
+
     try {
-      final isFriend = await _firestore
-          .collection('users')
-          .doc(userId)
-          .collection('friends')
-          .doc(currentUser.uid)
-          .get();
+      // Check if already friends
+      final friendDoc =
+          await _firestore
+              .collection('users')
+              .doc(currentUser.uid)
+              .collection('friends')
+              .doc(userId)
+              .get();
 
-      final requestSent = await _firestore
-          .collection('friend_requests')
-          .doc('${currentUser.uid}_$userId')
-          .get();
-      final requestReceived = await _firestore
-          .collection('friend_requests')
-          .doc('${userId}_${currentUser.uid}')
-          .get();
-
-      if (isFriend.exists || requestSent.exists || requestReceived.exists) {
-        _showSnack('Already friends or request exists');
+      if (friendDoc.exists) {
+        _showSnack('You are already friends with $userName');
         return;
       }
 
-      await _firestore.collection('friend_requests').doc('${currentUser.uid}_$userId').set({
-        'senderId': currentUser.uid,
-        'receiverId': userId,
-        'status': 'pending',
-        'createdAt': FieldValue.serverTimestamp(),
+      // Generate consistent request ID
+      final requestId = _generateRequestId(currentUser.uid, userId);
+      final requestRef = _firestore
+          .collection('friend_requests')
+          .doc(requestId);
+
+      // Check for existing request
+      final existingRequest = await requestRef.get();
+      if (existingRequest.exists) {
+        final status = existingRequest.data()?['status'] ?? 'pending';
+        _showSnack(
+          status == 'pending'
+              ? 'Friend request already sent to $userName'
+              : 'Previous request was ${status}',
+        );
+        return;
+      }
+
+      // Create the request
+      await _firestore.runTransaction((transaction) async {
+        // Verify again in transaction
+        final freshCheck = await transaction.get(requestRef);
+        if (freshCheck.exists) {
+          throw Exception('Request already exists');
+        }
+
+        transaction.set(requestRef, {
+          'senderId': currentUser.uid,
+          'receiverId': userId,
+          'status': 'pending',
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+
+        // Update counters (optional)
+        transaction.update(
+          _firestore.collection('users').doc(currentUser.uid),
+          {'pendingSentRequests': FieldValue.increment(1)},
+        );
+        transaction.update(_firestore.collection('users').doc(userId), {
+          'pendingReceivedRequests': FieldValue.increment(1),
+        });
       });
 
-      _showSnack('Friend request sent');
+      _showSnack('Friend request sent to $userName');
+    } on FirebaseException catch (e) {
+      _showSnack('Failed to send request: ${e.message}');
     } catch (e) {
-      _showSnack('Failed: ${e.toString()}');
+      _showSnack('An unexpected error occurred');
+      debugPrint('Error sending friend request: $e');
     }
   }
 
-  Future<void> _removeFriend(String friendId) async {
+  Future<void> _removeFriend(String friendId, String friendName) async {
     final currentUser = _auth.currentUser;
     if (currentUser == null) return;
 
-    try {
-      final batch = _firestore.batch();
+    // Show confirmation dialog
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder:
+          (ctx) => AlertDialog(
+            title: const Text('Remove Friend'),
+            content: Text(
+              'Are you sure you want to remove $friendName from your friends?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text(
+                  'Remove',
+                  style: TextStyle(color: Colors.red),
+                ),
+              ),
+            ],
+          ),
+    );
 
-      batch.delete(_firestore
-          .collection('users')
-          .doc(currentUser.uid)
-          .collection('friends')
-          .doc(friendId));
+    // If user confirmed removal
+    if (confirm == true) {
+      try {
+        // Show loading indicator
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => const Center(child: CircularProgressIndicator()),
+        );
 
-      batch.delete(_firestore
-          .collection('users')
-          .doc(friendId)
-          .collection('friends')
-          .doc(currentUser.uid));
+        final batch = _firestore.batch();
 
-      await batch.commit();
-      await _loadFriends();
-      _showSnack('Friend removed');
-    } catch (e) {
-      _showSnack('Failed to remove friend: ${e.toString()}');
+        // Remove from current user's friends
+        batch.delete(
+          _firestore
+              .collection('users')
+              .doc(currentUser.uid)
+              .collection('friends')
+              .doc(friendId),
+        );
+
+        // Remove from friend's friends list
+        batch.delete(
+          _firestore
+              .collection('users')
+              .doc(friendId)
+              .collection('friends')
+              .doc(currentUser.uid),
+        );
+
+        await batch.commit();
+
+        // Close loading dialog
+        if (mounted) Navigator.pop(context);
+
+        // Refresh friends list
+        await _loadFriends();
+
+        // Show success message
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('$friendName removed from friends')),
+          );
+        }
+      } catch (e) {
+        // Close loading dialog if still mounted
+        if (mounted) Navigator.pop(context);
+
+        // Show error message
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to remove friend: ${e.toString()}')),
+          );
+        }
+      }
     }
   }
 
@@ -141,11 +267,12 @@ class _ContactsScreenState extends State<ContactsScreen> {
         return Padding(
           padding: const EdgeInsets.all(16.0),
           child: StreamBuilder<QuerySnapshot>(
-            stream: _firestore
-                .collection('friend_requests')
-                .where('receiverId', isEqualTo: currentUser.uid)
-                .where('status', isEqualTo: 'pending')
-                .snapshots(),
+            stream:
+                _firestore
+                    .collection('friend_requests')
+                    .where('receiverId', isEqualTo: currentUser.uid)
+                    .where('status', isEqualTo: 'pending')
+                    .snapshots(),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());
@@ -169,7 +296,8 @@ class _ContactsScreenState extends State<ContactsScreen> {
                         return const ListTile(title: Text('Loading...'));
                       }
 
-                      final userData = userSnapshot.data!.data() as Map<String, dynamic>;
+                      final userData =
+                          userSnapshot.data!.data() as Map<String, dynamic>;
                       return ListTile(
                         leading: buildUserAvatar(userData['photoURL']),
                         title: Text(userData['displayName'] ?? 'Unknown'),
@@ -178,14 +306,27 @@ class _ContactsScreenState extends State<ContactsScreen> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             IconButton(
-                              icon: const Icon(Icons.check, color: Colors.green),
+                              icon: const Icon(
+                                Icons.check,
+                                color: Colors.green,
+                              ),
                               tooltip: 'Accept',
-                              onPressed: () => _respondToRequest(senderId, request.id, accept: true),
+                              onPressed:
+                                  () => _respondToRequest(
+                                    senderId,
+                                    request.id,
+                                    accept: true,
+                                  ),
                             ),
                             IconButton(
                               icon: const Icon(Icons.close, color: Colors.red),
                               tooltip: 'Deny',
-                              onPressed: () => _respondToRequest(senderId, request.id, accept: false),
+                              onPressed:
+                                  () => _respondToRequest(
+                                    senderId,
+                                    request.id,
+                                    accept: false,
+                                  ),
                             ),
                           ],
                         ),
@@ -201,16 +342,51 @@ class _ContactsScreenState extends State<ContactsScreen> {
     );
   }
 
-  Future<void> _respondToRequest(String senderId, String requestId, {required bool accept}) async {
+  Future<void> _respondToRequest(
+    String senderId,
+    String requestId, {
+    required bool accept,
+  }) async {
     final currentUser = _auth.currentUser;
     if (currentUser == null) return;
 
+    final actionText = accept ? 'accept' : 'deny';
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder:
+          (ctx) => AlertDialog(
+            title: Text('${accept ? "Accept" : "Deny"} Friend Request'),
+            content: Text(
+              'Are you sure you want to $actionText this friend request?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: Text(
+                  actionText[0].toUpperCase() + actionText.substring(1),
+                  style: TextStyle(color: accept ? Colors.green : Colors.red),
+                ),
+              ),
+            ],
+          ),
+    );
+
+    if (confirm != true) return;
+
     try {
-      final requestRef = _firestore.collection('friend_requests').doc(requestId);
+      final requestRef = _firestore
+          .collection('friend_requests')
+          .doc(requestId);
 
       if (accept) {
-        final senderDoc = await _firestore.collection('users').doc(senderId).get();
-        final receiverDoc = await _firestore.collection('users').doc(currentUser.uid).get();
+        final senderDoc =
+            await _firestore.collection('users').doc(senderId).get();
+        final receiverDoc =
+            await _firestore.collection('users').doc(currentUser.uid).get();
 
         final senderData = senderDoc.data()!;
         final receiverData = receiverDoc.data()!;
@@ -218,7 +394,11 @@ class _ContactsScreenState extends State<ContactsScreen> {
         final batch = _firestore.batch();
 
         batch.set(
-          _firestore.collection('users').doc(currentUser.uid).collection('friends').doc(senderId),
+          _firestore
+              .collection('users')
+              .doc(currentUser.uid)
+              .collection('friends')
+              .doc(senderId),
           {
             'uid': senderId,
             'email': senderData['email'],
@@ -228,7 +408,11 @@ class _ContactsScreenState extends State<ContactsScreen> {
         );
 
         batch.set(
-          _firestore.collection('users').doc(senderId).collection('friends').doc(currentUser.uid),
+          _firestore
+              .collection('users')
+              .doc(senderId)
+              .collection('friends')
+              .doc(currentUser.uid),
           {
             'uid': currentUser.uid,
             'email': receiverData['email'],
@@ -272,32 +456,43 @@ class _ContactsScreenState extends State<ContactsScreen> {
                 context: context,
                 delegate: FriendSearchDelegate(
                   onSearch: _searchUsers,
-                  onSendRequest: _sendFriendRequest,
+                  onSendRequest:
+                      (userId) => _sendFriendRequest(userId, 'Unknown'),
                 ),
               );
             },
           ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _friendsList.isEmpty
-              ? const Center(child: Text('No friends yet. Search to add friends.'))
+      body:
+          _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _friendsList.isEmpty
+              ? const Center(
+                child: Text('No friends yet. Search to add friends.'),
+              )
               : ListView.builder(
-                  itemCount: _friendsList.length,
-                  itemBuilder: (context, index) {
-                    final friend = _friendsList[index];
-                    return ListTile(
-                      leading: buildUserAvatar(friend['photoURL']),
-                      title: Text(friend['displayName'] ?? 'Unknown'),
-                      subtitle: Text(friend['email'] ?? ''),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.remove_circle_outline, color: Colors.red),
-                        onPressed: () => _removeFriend(friend['uid']),
+                itemCount: _friendsList.length,
+                itemBuilder: (context, index) {
+                  final friend = _friendsList[index];
+                  return ListTile(
+                    leading: buildUserAvatar(friend['photoURL']),
+                    title: Text(friend['displayName'] ?? 'Unknown'),
+                    subtitle: Text(friend['email'] ?? ''),
+                    trailing: IconButton(
+                      icon: const Icon(
+                        Icons.remove_circle_outline,
+                        color: Colors.red,
                       ),
-                    );
-                  },
-                ),
+                      onPressed:
+                          () => _removeFriend(
+                            friend['uid'],
+                            friend['displayName'],
+                          ),
+                    ),
+                  );
+                },
+              ),
     );
   }
 }
