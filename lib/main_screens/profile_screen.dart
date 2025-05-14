@@ -94,11 +94,11 @@ Future<void> _updateProfilePicture() async {
       return;
     }
 
-    // Optionally crop the image
-    final croppedFile = await ImageCropper().cropImage(
+    // Crop the image
+    final CroppedFile? croppedFile = await ImageCropper().cropImage(
       sourcePath: pickedFile.path,
       aspectRatio: const CropAspectRatio(ratioX: 1, ratioY: 1),
-      compressQuality: 75, // Better quality (75 instead of 20)
+      compressQuality: 75,
       uiSettings: [
         AndroidUiSettings(
           toolbarTitle: 'Crop Image',
@@ -118,32 +118,32 @@ Future<void> _updateProfilePicture() async {
       return;
     }
 
-    // Validate image MIME type
+    // Validate MIME type
     final mimeType = lookupMimeType(croppedFile.path);
     if (mimeType == null || !mimeType.startsWith('image')) {
       _showSnackBar('Please select a valid image file.', error: true);
       return;
     }
 
+    final File imageFile = File(croppedFile.path); // ✅ Proper conversion
+
     // Show loading dialog
     UIHelper.showLoadingDialog(context, 'Uploading image...');
 
-    // Upload image to Firebase Storage
+    // Upload to Firebase Storage
     final ref = FirebaseStorage.instance.ref('profile_pictures/${_currentUser!.uid}.jpg');
-    await ref.putFile(croppedFile as File);
+    await ref.putFile(imageFile);
     final photoURL = await ref.getDownloadURL();
 
-    // Update user's photoURL in Auth & Firestore
+    // Update photo URL
     await _currentUser!.updatePhotoURL(photoURL);
     await _firestore.collection('users').doc(_currentUser!.uid).update({'photoURL': photoURL});
 
-    // Close loading dialog and update local state
-    Navigator.pop(context);
+    Navigator.pop(context); // Close loading dialog
     setState(() => _userData['photoURL'] = photoURL);
-
     _showSnackBar('Profile picture updated!');
   } catch (e) {
-    Navigator.pop(context);
+    if (Navigator.canPop(context)) Navigator.pop(context); // Avoid popping if already closed
     _showSnackBar('Failed to update photo: ${e.toString()}', error: true);
   }
 }
