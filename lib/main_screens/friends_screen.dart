@@ -99,7 +99,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
           ),
     );
 
-    if (confirm != true) return;
+    if (confirm != true) {
 
     try {
       // Check if already friends
@@ -167,6 +167,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
       _showSnack('An unexpected error occurred');
       debugPrint('Error sending friend request: $e');
     }
+  }
   }
 
   Future<void> _removeFriend(String friendId, String friendName) async {

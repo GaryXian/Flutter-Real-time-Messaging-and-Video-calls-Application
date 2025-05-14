@@ -38,7 +38,7 @@ class MessageBubble extends StatelessWidget {
     this.isDeleted = false, // Default to not deleted
   });
 
-Future<void> _deleteMessage(BuildContext context) async {
+  Future<void> _deleteMessage(BuildContext context) async {
   final confirm = await showDialog<bool>(
     context: context,
     builder: (ctx) => AlertDialog(
@@ -90,7 +90,6 @@ Future<void> _deleteMessage(BuildContext context) async {
   }
 }
 
-
   Future<void> _updateLastMessageAfterDeletion(String conversationId) async {
     final messages =
         await FirebaseFirestore.instance
@@ -139,7 +138,7 @@ Future<void> _deleteMessage(BuildContext context) async {
           const Icon(Icons.not_interested, size: 14, color: Colors.grey),
           const SizedBox(width: 6),
           Text(
-            'This message was deleted',
+            'Message deleted',
             style: TextStyle(
               fontSize: 14,
               fontStyle: FontStyle.italic,
@@ -254,6 +253,14 @@ Future<void> _deleteMessage(BuildContext context) async {
   }
 
   void _editMessage(BuildContext context) async {
+    // Prevent editing deleted messages
+    if (isDeleted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('This message has been deleted.')),
+      );
+      return;
+    }
+
     final controller = TextEditingController(text: content);
     final newContent = await showDialog<String>(
       context: context,
@@ -293,29 +300,30 @@ Future<void> _deleteMessage(BuildContext context) async {
           });
     }
   }
+
   void _handleTyping(String text) {
-  if (!_isTyping) {
-    _isTyping = true;
-    FirebaseFirestore.instance.collection('conversations').doc(_conversationId).update({
-      'typingUsers.$_currentUserId': true,
+    if (!_isTyping) {
+      _isTyping = true;
+      FirebaseFirestore.instance
+          .collection('conversations')
+          .doc(_conversationId)
+          .update({'typingUsers.$_currentUserId': true});
+    }
+
+    _typingTimer?.cancel();
+    _typingTimer = Timer(const Duration(seconds: 2), () {
+      _isTyping = false;
+      FirebaseFirestore.instance
+          .collection('conversations')
+          .doc(_conversationId)
+          .update({'typingUsers.$_currentUserId': false});
     });
+    TextField(
+      controller: _messageController,
+      onChanged: _handleTyping,
+      decoration: InputDecoration(hintText: 'Type a message...'),
+    );
   }
-
-  _typingTimer?.cancel();
-  _typingTimer = Timer(const Duration(seconds: 2), () {
-    _isTyping = false;
-    FirebaseFirestore.instance.collection('conversations').doc(_conversationId).update({
-      'typingUsers.$_currentUserId': false,
-    });
-  });
-  TextField(
-  controller: _messageController,
-  onChanged: _handleTyping,
-  decoration: InputDecoration(hintText: 'Type a message...'),
-);
-
-}
-
 
   void _showFullScreenImage(String imageUrl) {
     // Implement full screen image viewer
@@ -338,17 +346,17 @@ Future<void> _deleteMessage(BuildContext context) async {
   }
 
   @override
-  Widget build(BuildContext context) {
-    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
-    final canDelete =
-        senderId == currentUserId &&
-        !isDeleted; // Can't delete already deleted messages
-    final timeString = DateFormat('h:mm a').format(timestamp.toDate());
+Widget build(BuildContext context) {
+  final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+  final canDelete = senderId == currentUserId && !isDeleted;
+  final timeString = DateFormat('h:mm a').format(timestamp.toDate());
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-      child: Align(
-        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+    child: Align(
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: AbsorbPointer( // 🔒 Prevent all interaction if deleted
+        absorbing: isDeleted,
         child: ConstrainedBox(
           constraints: BoxConstraints(
             maxWidth: MediaQuery.of(context).size.width * 0.75,
@@ -358,34 +366,32 @@ Future<void> _deleteMessage(BuildContext context) async {
               if (canDelete) {
                 showModalBottomSheet(
                   context: context,
-                  builder:
-                      (ctx) => SafeArea(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            ListTile(
-                              leading: const Icon(Icons.edit),
-                              title: const Text('Edit'),
-                              onTap: () {
-                                Navigator.of(ctx).pop();
-                                _editMessage(context);
-                              },
-                            ),
-                            ListTile(
-                              leading: const Icon(Icons.delete),
-                              title: const Text('Delete'),
-                              onTap: () {
-                                Navigator.of(ctx).pop();
-                                _deleteMessage(context);
-                              },
-                            ),
-                          ],
+                  builder: (ctx) => SafeArea(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ListTile(
+                          leading: const Icon(Icons.edit),
+                          title: const Text('Edit'),
+                          onTap: () {
+                            Navigator.of(ctx).pop();
+                            _editMessage(context);
+                          },
                         ),
-                      ),
+                        ListTile(
+                          leading: const Icon(Icons.delete),
+                          title: const Text('Delete'),
+                          onTap: () {
+                            Navigator.of(ctx).pop();
+                            _deleteMessage(context);
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
                 );
               }
             },
-
             child: Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -401,14 +407,12 @@ Future<void> _deleteMessage(BuildContext context) async {
                 crossAxisAlignment:
                     isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
                 children: [
-                  if (!isMe &&
-                      !isDeleted) // Don't show username for deleted messages
+                  if (!isMe && !isDeleted)
                     FutureBuilder(
-                      future:
-                          FirebaseFirestore.instance
-                              .collection('users')
-                              .doc(senderId)
-                              .get(),
+                      future: FirebaseFirestore.instance
+                          .collection('users')
+                          .doc(senderId)
+                          .get(),
                       builder: (context, snapshot) {
                         if (snapshot.hasData) {
                           final user = snapshot.data!.data();
@@ -438,8 +442,7 @@ Future<void> _deleteMessage(BuildContext context) async {
                           color: isMe ? Colors.white70 : Colors.black54,
                         ),
                       ),
-                      if (isMe &&
-                          !isDeleted) // Don't show read indicators for deleted messages
+                      if (isMe && !isDeleted)
                         Padding(
                           padding: const EdgeInsets.only(left: 4),
                           child: Icon(
@@ -456,6 +459,7 @@ Future<void> _deleteMessage(BuildContext context) async {
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }
