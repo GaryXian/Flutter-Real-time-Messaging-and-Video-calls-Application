@@ -14,6 +14,7 @@ class ContactsScreen extends StatefulWidget {
 class _ContactsScreenState extends State<ContactsScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  
 
   List<Map<String, dynamic>> _friendsList = [];
   bool _isLoading = false;
@@ -68,7 +69,9 @@ class _ContactsScreenState extends State<ContactsScreen> {
     return '${senderId}_$receiverId';
   }
 
-  Future<void> _sendFriendRequest(String userId, String userName) async {
+  Future<void> _sendFriendRequest(String userId, String displayName) async {
+    final userDoc = await _firestore.collection('users').doc(userId).get();
+    final displayName = userDoc.data()?['displayName'] ?? 'Unknown';
     final currentUser = _auth.currentUser;
     if (currentUser == null) {
       _showSnack('You must be logged in');
@@ -85,7 +88,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
       builder:
           (ctx) => AlertDialog(
             title: const Text('Send Friend Request'),
-            content: Text('Do you want to send a friend request to $userName?'),
+            content: Text('Do you want to send a friend request to $displayName?'),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx, false),
@@ -99,7 +102,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
           ),
     );
 
-    if (confirm != true) {
+    if (confirm != true) return;
 
     try {
       // Check if already friends
@@ -112,7 +115,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
               .get();
 
       if (friendDoc.exists) {
-        _showSnack('You are already friends with $userName');
+        _showSnack('You are already friends with $displayName');
         return;
       }
 
@@ -128,7 +131,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
         final status = existingRequest.data()?['status'] ?? 'pending';
         _showSnack(
           status == 'pending'
-              ? 'Friend request already sent to $userName'
+              ? 'Friend request already sent to $displayName'
               : 'Previous request was ${status}',
         );
         return;
@@ -160,7 +163,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
         });
       });
 
-      _showSnack('Friend request sent to $userName');
+      _showSnack('Friend request sent to $displayName');
     } on FirebaseException catch (e) {
       _showSnack('Failed to send request: ${e.message}');
     } catch (e) {
@@ -168,8 +171,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
       debugPrint('Error sending friend request: $e');
     }
   }
-  }
-
+  
   Future<void> _removeFriend(String friendId, String friendName) async {
     final currentUser = _auth.currentUser;
     if (currentUser == null) return;
@@ -259,6 +261,8 @@ class _ContactsScreenState extends State<ContactsScreen> {
 
   Future<void> _showFriendRequests() async {
     final currentUser = _auth.currentUser;
+    final userId = currentUser?.uid;
+    final displayName = currentUser?.displayName;
     if (currentUser == null) return;
 
     showModalBottomSheet(
