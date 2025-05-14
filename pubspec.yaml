@@ -49,9 +49,11 @@ dependencies:
   flutter_webrtc: ^0.14.0
   google_sign_in: ^6.3.0
   flutter_facebook_auth: ^7.1.2
+  image_cropper: ^9.1.0
 
 
 
+  mime: any
 dev_dependencies:
   flutter_test:
     sdk: flutter

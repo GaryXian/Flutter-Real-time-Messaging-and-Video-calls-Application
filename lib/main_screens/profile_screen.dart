@@ -8,6 +8,9 @@ import 'package:intl/intl.dart';
 import 'package:mime/mime.dart';
 import '../authentication_screens/login_screen.dart';
 import '../sub_screens/settings_screen.dart';
+import 'package:image_cropper/image_cropper.dart';
+
+import '../widgets/helper.dart';
 
 
 class ProfileScreen extends StatefulWidget {
@@ -77,48 +80,74 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
 Future<void> _updateProfilePicture() async {
-  final picker = ImagePicker();
-  final pickedFile = await picker.pickImage(source: ImageSource.gallery);
+  if (_currentUser == null) {
+    _showSnackBar('User not logged in.', error: true);
+    return;
+  }
 
-  if (pickedFile != null && _currentUser != null) {
-    try {
-      // Check the file type to ensure it's an image
-      final mimeType = lookupMimeType(pickedFile.path);
-      if (mimeType == null || !mimeType.startsWith('image')) {
-        _showSnackBar('Please select a valid image file.', error: true);
-        return;
-      }
+  try {
+    // Pick image from gallery
+    final XFile? pickedFile = await ImagePicker().pickImage(source: ImageSource.gallery);
 
-      // Optionally, compress the image to a manageable size
-      final File imageFile = File(pickedFile.path);
-
-      // Generate a reference for the profile picture in Firebase Storage
-      final ref = FirebaseStorage.instance.ref('profile_pictures/${_currentUser!.uid}.jpg');
-
-      // Upload the image to Firebase Storage
-      await ref.putFile(imageFile);
-
-      // Get the URL of the uploaded image
-      final photoURL = await ref.getDownloadURL();
-
-      // Update the user's photo URL in Firebase Authentication and Firestore
-      await _currentUser!.updatePhotoURL(photoURL);
-      await _firestore.collection('users').doc(_currentUser!.uid).update({'photoURL': photoURL});
-
-      // Update the local state with the new photo URL
-      setState(() => _userData['photoURL'] = photoURL);
-
-      // Show success message
-      _showSnackBar('Profile picture updated!');
-    } catch (e) {
-      // Catch any errors and display them in the snackbar
-      _showSnackBar('Failed to update photo: ${e.toString()}', error: true);
+    if (pickedFile == null) {
+      _showSnackBar('No image selected.', error: true);
+      return;
     }
-  } else {
-    // Handle case where no image was selected or user is null
-    _showSnackBar('No image selected or user not logged in.', error: true);
+
+    // Crop the image
+    final CroppedFile? croppedFile = await ImageCropper().cropImage(
+      sourcePath: pickedFile.path,
+      aspectRatio: const CropAspectRatio(ratioX: 1, ratioY: 1),
+      compressQuality: 75,
+      uiSettings: [
+        AndroidUiSettings(
+          toolbarTitle: 'Crop Image',
+          toolbarColor: Theme.of(context).primaryColor,
+          toolbarWidgetColor: Colors.white,
+          lockAspectRatio: true,
+        ),
+        IOSUiSettings(
+          title: 'Crop Image',
+          aspectRatioLockEnabled: true,
+        ),
+      ],
+    );
+
+    if (croppedFile == null) {
+      _showSnackBar('Image cropping canceled.', error: true);
+      return;
+    }
+
+    // Validate MIME type
+    final mimeType = lookupMimeType(croppedFile.path);
+    if (mimeType == null || !mimeType.startsWith('image')) {
+      _showSnackBar('Please select a valid image file.', error: true);
+      return;
+    }
+
+    final File imageFile = File(croppedFile.path); // ✅ Proper conversion
+
+    // Show loading dialog
+    UIHelper.showLoadingDialog(context, 'Uploading image...');
+
+    // Upload to Firebase Storage
+    final ref = FirebaseStorage.instance.ref('profile_pictures/${_currentUser!.uid}.jpg');
+    await ref.putFile(imageFile);
+    final photoURL = await ref.getDownloadURL();
+
+    // Update photo URL
+    await _currentUser!.updatePhotoURL(photoURL);
+    await _firestore.collection('users').doc(_currentUser!.uid).update({'photoURL': photoURL});
+
+    Navigator.pop(context); // Close loading dialog
+    setState(() => _userData['photoURL'] = photoURL);
+    _showSnackBar('Profile picture updated!');
+  } catch (e) {
+    if (Navigator.canPop(context)) Navigator.pop(context); // Avoid popping if already closed
+    _showSnackBar('Failed to update photo: ${e.toString()}', error: true);
   }
 }
+
 
 
   Future<void> _updateField(String title, String field, {bool isPassword = false, TextInputType? inputType}) async {
@@ -378,7 +407,7 @@ Future<void> _updateProfilePicture() async {
         title: 'Account Security',
         children: [
           _buildMenuTile(Icons.email, 'Change Email', () => _updateField('Change Email', 'email', inputType: TextInputType.emailAddress)),
-          _buildMenuTile(Icons.phone, 'Change Phone Number', _changePhone),
+          //_buildMenuTile(Icons.phone, 'Change Phone Number', _changePhone),
           _buildMenuTile(Icons.lock, 'Change Password', () => _updateField('Change Password', 'password', isPassword: true)),
           _buildMenuTile(Icons.person, 'Change Username', () => _updateField('Change Username', 'displayName')),
         ],
