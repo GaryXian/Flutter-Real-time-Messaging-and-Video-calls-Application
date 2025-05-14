@@ -5,7 +5,9 @@ import 'package:intl/intl.dart';
 import '../screens/chat_screen.dart';
 
 class MessagesScreen extends StatefulWidget {
+
   const MessagesScreen({super.key});
+  
 
   @override
   State<MessagesScreen> createState() => _MessagesScreenState();
@@ -15,10 +17,15 @@ class _MessagesScreenState extends State<MessagesScreen> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final TextEditingController _searchController = TextEditingController();
-
+  final ScrollController _scrollController = ScrollController();
   final Map<String, Map<String, dynamic>> _userCache = {};
   List<Map<String, dynamic>> _availableUsers = [];
   bool _isLoadingUsers = false;
+    bool _isLoading=false;
+    bool _hasMore=true;
+    int _messagesPerPage = 20;
+    DocumentSnapshot? _lastDocument;
+    List<QueryDocumentSnapshot> _messages = [];
 
   String _generateConversationId(String userId1, String userId2) {
     // Check if trying to create a self-conversation
@@ -30,6 +37,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
         ? '${userId1}_$userId2'
         : '${userId2}_$userId1';
   }
+  
 
   Future<void> _startNewConversation(
     String contactId,
@@ -144,6 +152,40 @@ class _MessagesScreenState extends State<MessagesScreen> {
       );
     }
   }
+  
+Future<void> _loadMessages() async {
+  // Prevent re-entrance if already loading or no more messages
+  if (_isLoading || !_hasMore) return;
+
+  setState(() => _isLoading = true);
+
+  try {
+    Query query = _firestore.collection('conversations').doc('conversationId').collection('messages')
+        .orderBy('timestamp', descending: true)
+        .limit(_messagesPerPage);
+
+    if (_lastDocument != null) {
+      query = query.startAfterDocument(_lastDocument!);
+    }
+
+    final snapshot = await query.get();
+
+    if (snapshot.docs.isNotEmpty) {
+      _lastDocument = snapshot.docs.last;
+      _messages.addAll(snapshot.docs);
+    }
+
+    if (snapshot.docs.length < _messagesPerPage) {
+      _hasMore = false;
+    }
+  } catch (e) {
+    debugPrint("Error loading messages: $e");
+  } finally {
+    setState(() => _isLoading = false);
+  }
+}
+
+  
 
   Future<void> _loadFriends() async {
     final currentUserId = _auth.currentUser?.uid;
@@ -223,7 +265,18 @@ class _MessagesScreenState extends State<MessagesScreen> {
   void initState() {
     super.initState();
     _loadFriends();
+    _loadMessages();
+
+    _scrollController.addListener(() {
+      if (_scrollController.position.pixels ==
+              _scrollController.position.minScrollExtent &&
+          !_isLoading &&
+          _hasMore) {
+        _loadMessages();
+      }
+    });
   }
+  
 
   @override
   Widget build(BuildContext context) {

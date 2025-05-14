@@ -330,20 +330,21 @@ class MessageBubble extends StatelessWidget {
     // Could use a package like photo_view
   }
 
-  Color _getBubbleColor() {
-    if (isDeleted) {
-      // Use subdued colors for deleted messages
-      return isMe ? Colors.blueGrey.withOpacity(0.5) : Colors.grey[200]!;
-    }
-
-    if (isMe) {
-      return messageType == 'text'
-          ? Colors.blueAccent
-          : Colors.blueAccent.withOpacity(0.9);
-    } else {
-      return messageType == 'text' ? Colors.grey[300]! : Colors.grey[200]!;
-    }
+Color _getBubbleColor() {
+  if (isDeleted) {
+    return isMe ? Colors.blueGrey.withOpacity(0.5) : Colors.grey[200]!;
   }
+
+  if (messageType == 'image' && isMe) {
+    return Colors.transparent; // No background for user's image
+  }
+
+  if (isMe) {
+    return Colors.blueAccent;
+  } else {
+    return messageType == 'text' ? Colors.grey[300]! : Colors.grey[200]!;
+  }
+}
 
   @override
 Widget build(BuildContext context) {
