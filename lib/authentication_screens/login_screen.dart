@@ -343,35 +343,35 @@ Future<void> loginWithFacebook() async {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 const SizedBox(height: 20),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      minimumSize: Size(50, 50), // Adjust size for better layout
-                      backgroundColor: Colors.white,
-                      side: const BorderSide(color: Colors.grey), // Adds border for visibility
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(5), // Ensures sharp corners for a square button
-                      ),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    minimumSize: Size(150, 70), // Adjust size for better layout
+                    backgroundColor: Colors.white,
+                    side: const BorderSide(color: Colors.grey), // Adds border for visibility
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(5), // Ensures sharp corners for a square button
                     ),
-                    onPressed: loginWithGoogle,
-                    icon: Image.asset('lib/assets/images/google_icon.png', height: 24),
-                    label: Text(''), // Ensure correct file path
                   ),
+                  onPressed: loginWithGoogle,
+                  icon: Image.asset('lib/assets/images/google_icon.png', height: 40),
+                  label: Text(' Google', style: TextStyle(
+                    color: Colors.blueAccent
+                  ),), // Ensure correct file path
                 ),
                 const SizedBox(width: 10), // Adds spacing
-                Expanded(
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      minimumSize: Size(50, 50),
-                      backgroundColor: Colors.blue[800],
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(5), // Ensures sharp corners for a square button
-                      ),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    minimumSize: Size(50, 70),
+                    backgroundColor: Colors.blue[800],
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(5), // Ensures sharp corners for a square button
                     ),
-                    onPressed: loginWithFacebook,
-                    icon: const Icon(Icons.facebook, color: Colors.white),
-                    label: Text(''),
                   ),
+                  onPressed: loginWithFacebook,
+                  icon: const Icon(Icons.facebook, color: Colors.white, size: 36,),
+                  label: Text(' Facebook', style: TextStyle(
+                    color: Colors.white
+                  ),),
                 ),
               ],
             ),
