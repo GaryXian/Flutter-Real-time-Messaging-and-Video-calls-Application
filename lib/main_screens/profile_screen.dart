@@ -100,6 +100,7 @@ Future<void> _updateProfilePicture() async {
     final XFile? pickedFile = await ImagePicker().pickImage(
       source: ImageSource.gallery,
       requestFullMetadata: false, // Faster picking
+      imageQuality: 85, // Default quality
     );
 
     if (pickedFile == null) return;
@@ -107,9 +108,9 @@ Future<void> _updateProfilePicture() async {
     // Show loading dialog immediately
     _showUploadDialog(currentContext);
 
-    // Process image in background isolate
-    final processedFile = await _processImageInIsolate(File(pickedFile.path));
-    if (processedFile == null) {
+    // Process image in main thread (simpler approach)
+    final compressedFile = await _compressImage(File(pickedFile.path));
+    if (compressedFile == null) {
       if (currentContext.mounted) Navigator.pop(currentContext);
       return;
     }
@@ -125,15 +126,24 @@ Future<void> _updateProfilePicture() async {
         .child('profile_pictures')
         .child('${_currentUser!.uid}.jpg');
 
+    // Delete old image first if exists
+    try {
+      await ref.delete();
+    } catch (e) {
+      debugPrint('No existing image to delete or error deleting: $e');
+    }
+
     final uploadTask = ref.putFile(
-      processedFile,
+      compressedFile,
       SettableMetadata(contentType: 'image/jpeg'),
     );
 
     uploadTask.snapshotEvents.listen((taskSnapshot) {
-      setState(() {
-        _uploadProgress = taskSnapshot.bytesTransferred / taskSnapshot.totalBytes;
-      });
+      if (currentContext.mounted) {
+        setState(() {
+          _uploadProgress = taskSnapshot.bytesTransferred / taskSnapshot.totalBytes;
+        });
+      }
     });
 
     await uploadTask;
@@ -156,11 +166,28 @@ Future<void> _updateProfilePicture() async {
       _showSnackBar('Profile picture updated!');
     }
   } catch (e) {
-    if (!(e is DioError && e.type == DioErrorType.cancel) && currentContext.mounted) {
+    if (currentContext.mounted) {
       Navigator.pop(currentContext);
       _showSnackBar('Upload failed: ${e.toString()}', error: true);
     }
     setState(() => _isUploading = false);
+    debugPrint('Profile picture update error: $e');
+  }
+}
+
+Future<File?> _compressImage(File originalFile) async {
+  try {
+    final result = await FlutterImageCompress.compressAndGetFile(
+      originalFile.path,
+      '${originalFile.path}_compressed.jpg',
+      quality: 80,
+      minWidth: 800,
+      minHeight: 800,
+    );
+    return result != null ? File(result.path) : null;
+  } catch (e) {
+    debugPrint('Image compression error: $e');
+    return originalFile; // Fallback to original if compression fails
   }
 }
 

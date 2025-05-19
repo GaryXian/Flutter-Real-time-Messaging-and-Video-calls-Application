@@ -431,41 +431,29 @@ class MessageBubble extends StatelessWidget {
     }
   }
 
-  void _showOverlayWithMenus(BuildContext context, bool canDelete) {
+void _showOverlayWithMenus(BuildContext context, bool canDelete) {
   final RenderBox renderBox = context.findRenderObject() as RenderBox;
   final messagePosition = renderBox.localToGlobal(Offset.zero);
   final messageSize = renderBox.size;
   final screenSize = MediaQuery.of(context).size;
 
-  OverlayState overlayState = Overlay.of(context);
+  final overlay = Overlay.of(context);
   late OverlayEntry overlayEntry;
 
-  // Assign a temporary OverlayEntry to overlayEntry so it can be passed as a parameter
-  overlayEntry = OverlayEntry(builder: (_) => const SizedBox());
+  // Calculate safe menu position (bottom right by default)
+  const double menuWidth = 120;
+  const double menuHeightEstimate = 200; // approximate menu height
+  double dx = messagePosition.dx + messageSize.width - menuWidth;
+  double dy = messagePosition.dy + messageSize.height;
 
-  // Calculate emoji bar position with smart placement
-  final emojiBarPosition = _calculateEmojiBarPosition(
-    messagePosition,
-    messageSize,
-    screenSize,
-  );
+  // Clamp to screen bounds
+  dx = dx.clamp(8.0, screenSize.width - menuWidth - 8.0);
+  dy = dy.clamp(8.0, screenSize.height - menuHeightEstimate - 8.0);
 
-  // Calculate options menu position with smart placement
-  final optionsMenuPosition = _calculateOptionsMenuPosition(
-    messagePosition,
-    messageSize,
-    screenSize,
-    canDelete,
-  );
-
-  // Build menu items
-  final menuItems = _buildMenuItems(context, canDelete, overlayEntry);
-
-  // Now assign the real overlayEntry with the correct builder
   overlayEntry = OverlayEntry(
     builder: (context) => Stack(
       children: [
-        // Dismissible background
+        // Dismiss on tap outside
         Positioned.fill(
           child: GestureDetector(
             onTap: () => overlayEntry.remove(),
@@ -474,84 +462,23 @@ class MessageBubble extends StatelessWidget {
           ),
         ),
 
-        // Emoji reaction bar
-        //_buildEmojiBar(context, emojiBarPosition, overlayEntry),
-
-        // Message options menu
-        _buildOptionsMenu(context, optionsMenuPosition, menuItems),
+        // Options menu
+        Positioned(
+          left: dx,
+          top: dy,
+          child: _buildOptionsMenu(
+            context,
+            Offset(dx, dy),
+            _buildMenuItems(context, canDelete, overlayEntry),
+          ),
+        ),
       ],
     ),
   );
 
-  overlayState.insert(overlayEntry);
+  overlay.insert(overlayEntry);
 }
 
-// Helper methods for better organization:
-
-Offset _calculateEmojiBarPosition(
-  Offset messagePosition,
-  Size messageSize,
-  Size screenSize,
-) {
-  const double emojiBarHeight = 48;
-  const double emojiBarWidth = 240;
-  const double margin = 8;
-
-  // Try to position above message first
-  double emojiBarY = messagePosition.dy - emojiBarHeight - 12;
-  double emojiBarX = messagePosition.dx + (messageSize.width - emojiBarWidth) / 2;
-
-  // Adjust if going off screen
-  if (emojiBarY < margin) {
-    // If no space above, position below
-    emojiBarY = messagePosition.dy + messageSize.height + 12;
-  }
-
-  // Keep within horizontal bounds
-  emojiBarX = emojiBarX.clamp(margin, screenSize.width - emojiBarWidth - margin);
-
-  return Offset(emojiBarX, emojiBarY);
-}
-
-Offset _calculateOptionsMenuPosition(
-  Offset messagePosition,
-  Size messageSize,
-  Size screenSize,
-  bool canDelete,
-) {
-  const double menuWidth = 120;
-  const double menuItemHeight = 48;
-  final menuHeight = _calculateMenuHeight(canDelete);
-
-  double menuX = messagePosition.dx + messageSize.width - menuWidth;
-  double menuY = messagePosition.dy - (menuHeight - messageSize.height) / 2;
-
-  // Adjust for screen edges
-  menuX = menuX.clamp(8, screenSize.width - menuWidth - 8);
-  menuY = menuY.clamp(8, screenSize.height - menuHeight - 8);
-
-  return Offset(menuX, menuY);
-}
-
-double _calculateMenuHeight(bool canDelete) {
-  const double itemHeight = 48;
-  const double dividerHeight = 1;
-  
-  int itemCount = 2; // Reply + React (base items)
-  int dividerCount = 0;
-  
-  if (messageType == 'text') {
-    itemCount += 1; // Copy
-    dividerCount += 1;
-  }
-  
-  if (canDelete) {
-    itemCount += 2; // Edit + Delete
-    dividerCount += 2;
-  }
-  
-  return (itemCount * itemHeight) + (dividerCount * dividerHeight);
-}
 
 List<Widget> _buildMenuItems(
   BuildContext context,
@@ -711,7 +638,7 @@ Widget _buildOptionsMenu(BuildContext context, Offset position, List<Widget> ite
     });
   }
 
-  @override
+@override
 Widget build(BuildContext context) {
   final currentUserId = FirebaseAuth.instance.currentUser?.uid;
   final canDelete = senderId == currentUserId && !isDeleted;
@@ -731,17 +658,17 @@ Widget build(BuildContext context) {
         Flexible(
           child: Align(
             alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-            child: AbsorbPointer(
-              absorbing: isDeleted,
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: MediaQuery.of(context).size.width * 0.75,
-                ),
-                child: GestureDetector(
-                  onLongPress: () {
-                    if (isDeleted) return;
-                    _showOverlayWithMenus(context, canDelete);
-                  },
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: MediaQuery.of(context).size.width * 0.75,
+              ),
+              child: GestureDetector(
+                onLongPress: () {
+                  if (isDeleted) return;
+                  _showOverlayWithMenus(context, canDelete);
+                },
+                child: AbsorbPointer(
+                  absorbing: isDeleted,
                   child: Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
