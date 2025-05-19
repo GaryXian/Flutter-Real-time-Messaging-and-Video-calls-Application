@@ -1,9 +1,9 @@
-// call_screen.dart
-
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'dart:async';
 
 class CallScreen extends StatefulWidget {
   final String conversationId;
@@ -23,7 +23,7 @@ class CallScreen extends StatefulWidget {
   State<CallScreen> createState() => _CallScreenState();
 }
 
-class _CallScreenState extends State<CallScreen> {
+class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
   final _localRenderer = RTCVideoRenderer();
   final _remoteRenderer = RTCVideoRenderer();
 
@@ -34,194 +34,939 @@ class _CallScreenState extends State<CallScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
   bool _isCaller = false;
+  bool _isConnected = false;
+  bool _isMicMuted = false;
+  bool _isCameraOff = false;
+  bool _isSpeakerOn = true;
+  bool _isCallAccepted = false;
+  bool _isCallEnded = false;
+
+  StreamSubscription? _callStatusSubscription;
+  StreamSubscription? _iceCandidatesSubscription;
+  StreamSubscription? _answerSubscription;
+
+  String _callStatus = 'Initializing...';
+  String? _peerName;
+
+  Timer? _callTimer;
+  Duration _callDuration = Duration.zero;
 
   @override
   void initState() {
     super.initState();
-    _initRenderers();
-    _initCall();
+    WidgetsBinding.instance.addObserver(this);
+    _setupCall();
+    _fetchPeerName();
   }
 
-  Future<void> _initRenderers() async {
-    await _localRenderer.initialize();
-    await _remoteRenderer.initialize();
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.detached) {
+      // App is being closed or minimized
+      _endCall(userInitiated: false);
+    }
   }
 
-  Future<void> _initCall() async {
+  Future<void> _fetchPeerName() async {
+    try {
+      // Determine if current user is caller or receiver
+      final currentUserId = _auth.currentUser?.uid;
+      _isCaller = widget.callerId == currentUserId;
+      
+      // Get the ID of the peer (other person)
+      final peerId = _isCaller ? widget.receiverId : widget.callerId;
+      
+      final userDoc = await _firestore.collection('users').doc(peerId).get();
+
+      if (userDoc.exists && userDoc.data() != null) {
+        if (mounted) {
+          setState(() {
+            _peerName = userDoc.data()!['displayName'] ?? 'Unknown';
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching peer name: $e');
+    }
+  }
+
+  Future<void> _setupCall() async {
+    if (!mounted) return;
+    
+    setState(() {
+      _callStatus = 'Setting up call...';
+    });
+
     final currentUserId = _auth.currentUser?.uid;
-    if (currentUserId == null) return;
+    if (currentUserId == null) {
+      _handleError('User not authenticated');
+      return;
+    }
 
     _isCaller = widget.callerId == currentUserId;
 
-    final mediaConstraints = widget.isVideoCall
-        ? {'audio': true, 'video': true}
-        : {'audio': true, 'video': false};
+    try {
+      // Initialize renderers first
+      await _localRenderer.initialize();
+      await _remoteRenderer.initialize();
+      
+      // Request permissions and immediately start call flow
+      await _initCallFlow();
+    } catch (e) {
+      _handleError('Failed to initialize call: $e');
+    }
+  }
 
-    final stream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
-    _localStream = stream;
-    _localRenderer.srcObject = stream;
+  Future<void> _initCallFlow() async {
+    if (!mounted) return;
+    
+    // Request permissions
+    final hasPermissions = await _requestCallPermissions();
+    if (!hasPermissions || !mounted) return;
 
+    // Create/update call document for caller
+    if (_isCaller) {
+      await _firestore.collection('calls').doc(widget.conversationId).set({
+        'callerId': widget.callerId,
+        'receiverId': widget.receiverId,
+        'isVideo': widget.isVideoCall,
+        'status': 'ringing',
+        'startedAt': FieldValue.serverTimestamp(),
+      });
+    }
+
+    // Listen for call status changes
+    _startCallStatusListener();
+
+    try {
+      // Initialize media and start connections
+      await _initMediaDevices();
+      if (!mounted) return;
+      
+      await _initPeerConnection();
+      if (!mounted) return;
+
+      if (_isCaller) {
+        if (mounted) {
+          setState(() {
+            _callStatus = 'Calling...';
+          });
+        }
+        await _createOffer();
+      } else {
+        if (mounted) {
+          setState(() {
+            _callStatus = 'Incoming call...';
+          });
+        }
+        await _listenForOffer();
+        // Auto-answer for receiver after permissions are granted
+        if (mounted) {
+          await _acceptCall();
+        }
+      }
+    } catch (e) {
+      _handleError('Failed to establish call: $e');
+    }
+  }
+
+  void _startCallStatusListener() {
+    _callStatusSubscription = _firestore
+        .collection('calls')
+        .doc(widget.conversationId)
+        .snapshots()
+        .listen(
+          _handleCallStatusChange,
+          onError: (error) {
+            _handleError('Error monitoring call: $error');
+          },
+        );
+  }
+
+  Future<bool> _requestCallPermissions() async {
+    if (!mounted) return false;
+    
+    setState(() {
+      _callStatus = 'Checking permissions...';
+    });
+
+    bool microphoneGranted = false;
+    bool cameraGranted = true; // Default to true for audio calls
+
+    // Request microphone permission for any call
+    microphoneGranted = await Permission.microphone.request().isGranted;
+
+    // Only request camera for video calls
+    if (widget.isVideoCall) {
+      cameraGranted = await Permission.camera.request().isGranted;
+    }
+
+    // Check if all required permissions were granted
+    final hasRequiredPermissions = widget.isVideoCall
+        ? (cameraGranted && microphoneGranted)
+        : microphoneGranted;
+
+    if (!hasRequiredPermissions && mounted) {
+      _handleError('Required permissions were not granted');
+
+      // Exit call screen after showing error
+      Future.delayed(const Duration(seconds: 2), () {
+        if (mounted) {
+          Navigator.pop(context);
+        }
+      });
+    }
+
+    return hasRequiredPermissions;
+  }
+
+  void _handleCallStatusChange(DocumentSnapshot snapshot) {
+    if (!mounted) return;
+    
+    if (!snapshot.exists || snapshot.data() == null) {
+      // Call document deleted, end call if not already ended
+      if (!_isCallEnded) {
+        _endCall(userInitiated: false);
+      }
+      return;
+    }
+
+    final data = snapshot.data() as Map<String, dynamic>;
+    final status = data['status'];
+
+    if (status == 'accepted' && !_isCallAccepted && mounted) {
+      setState(() {
+        _isCallAccepted = true;
+        _callStatus = 'Connected';
+      });
+
+      // Start call timer
+      _startCallTimer();
+
+      // Add message to conversation history
+      _addCallToHistory();
+    } else if (status == 'declined' && !_isCallEnded && mounted) {
+      setState(() {
+        _callStatus = 'Call declined';
+      });
+
+      // Allow time to see the status before closing
+      Future.delayed(const Duration(seconds: 2), () {
+        if (mounted) {
+          _endCall(userInitiated: false);
+        }
+      });
+    } else if (status == 'ended' && !_isCallEnded) {
+      _endCall(userInitiated: false);
+    }
+  }
+
+  void _startCallTimer() {
+    _callTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (mounted) {
+        setState(() {
+          _callDuration += const Duration(seconds: 1);
+        });
+      } else {
+        // Cancel the timer if the widget is no longer mounted
+        timer.cancel();
+      }
+    });
+  }
+
+  void _addCallToHistory() {
+    // Add a message to the conversation showing the call happened
+    _firestore
+        .collection('conversations')
+        .doc(widget.conversationId)
+        .collection('messages')
+        .add({
+          'senderId': widget.callerId,
+          'text': '${widget.isVideoCall ? 'Video' : 'Audio'} call',
+          'timestamp': FieldValue.serverTimestamp(),
+          'isCallHistory': true,
+          'callType': widget.isVideoCall ? 'video' : 'audio',
+        });
+  }
+
+  Future<void> _initMediaDevices() async {
+    if (!mounted) return;
+    
+    try {
+      // Configure media constraints based on call type
+      final mediaConstraints = widget.isVideoCall
+          ? {
+              'audio': true,
+              'video': {
+                'facingMode': 'user',
+                'width': {'ideal': 640},
+                'height': {'ideal': 480},
+              }
+            }
+          : {'audio': true, 'video': false};
+
+      try {
+        _localStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
+      } catch (e) {
+        debugPrint('getUserMedia error: $e');
+        
+        // Try with simpler constraints if failed
+        if (widget.isVideoCall) {
+          _localStream = await navigator.mediaDevices.getUserMedia({
+            'audio': true,
+            'video': true,
+          });
+        } else {
+          throw Exception('Failed to access media devices: $e');
+        }
+      }
+
+      if (_localStream == null) {
+        throw Exception('Failed to get media stream');
+      }
+
+      if (mounted) {
+        setState(() {
+          _localRenderer.srcObject = _localStream;
+        });
+      }
+    } catch (e) {
+      _handleError('Error accessing media devices: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> _initPeerConnection() async {
+    if (!mounted) return;
+    
     final config = {
       'iceServers': [
         {'urls': 'stun:stun.l.google.com:19302'},
-      ]
+        // Add TURN server here for better connectivity if needed
+      ],
     };
 
-    _peerConnection = await createPeerConnection(config);
+    try {
+      _peerConnection = await createPeerConnection(config);
 
-    // Add local stream
-    for (var track in stream.getTracks()) {
-      await _peerConnection?.addTrack(track, stream);
-    }
-
-    // On remote stream
-    _peerConnection?.onTrack = (event) {
-      if (event.streams.isNotEmpty) {
-        setState(() {
-          _remoteRenderer.srcObject = event.streams[0];
-        });
+      // Add local stream tracks
+      if (_localStream != null) {
+        for (var track in _localStream!.getTracks()) {
+          await _peerConnection?.addTrack(track, _localStream!);
+        }
       }
-    };
 
-    // Handle ICE candidates (send only local)
-    _peerConnection?.onIceCandidate = (candidate) {
-      if (candidate.candidate != null) {
-        _firestore
-            .collection('calls')
-            .doc(widget.conversationId)
-            .collection('iceCandidates')
-            .add({
-          'candidate': candidate.candidate,
-          'sdpMid': candidate.sdpMid,
-          'sdpMLineIndex': candidate.sdpMLineIndex,
-        });
-      }
-    };
+      // Event handlers
+      _peerConnection?.onTrack = (event) {
+        if (event.streams.isNotEmpty && mounted) {
+          setState(() {
+            _remoteRenderer.srcObject = event.streams[0];
+            _isConnected = true;
+          });
+        }
+      };
 
-    if (_isCaller) {
-      await _createOffer();
-    } else {
-      await _listenForOffer();
+      _peerConnection?.onIceCandidate = (candidate) {
+        if (candidate.candidate != null && !_isCallEnded) {
+          _firestore
+              .collection('calls')
+              .doc(widget.conversationId)
+              .collection('iceCandidates')
+              .add({
+                'candidate': candidate.candidate,
+                'sdpMid': candidate.sdpMid,
+                'sdpMLineIndex': candidate.sdpMLineIndex,
+                'fromCaller': _isCaller,
+              });
+        }
+      };
+
+      _peerConnection?.onConnectionState = (state) {
+        debugPrint('Connection state changed: $state');
+        if ((state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
+            state == RTCPeerConnectionState.RTCPeerConnectionStateClosed) && 
+            !_isCallEnded) {
+          _handleConnectionFailure();
+        }
+      };
+
+      _peerConnection?.onIceConnectionState = (state) {
+        debugPrint('ICE connection state changed: $state');
+        if (state == RTCIceConnectionState.RTCIceConnectionStateConnected && mounted) {
+          setState(() {
+            _isConnected = true;
+            _callStatus = 'Connected';
+          });
+        } else if ((state == RTCIceConnectionState.RTCIceConnectionStateFailed ||
+            state == RTCIceConnectionState.RTCIceConnectionStateDisconnected) &&
+            !_isCallEnded) {
+          _handleConnectionFailure();
+        }
+      };
+
+      // Listen for ICE candidates
+      _listenForIceCandidates();
+
+    } catch (e) {
+      throw Exception('Error initializing peer connection: $e');
     }
+  }
+  
+  void _handleConnectionFailure() {
+    if (mounted && !_isCallEnded) {
+      setState(() {
+        _callStatus = 'Connection lost';
+      });
 
-    _listenForIceCandidates();
+      // Give some time for reconnection attempts
+      Future.delayed(const Duration(seconds: 5), () {
+        if (mounted && _callStatus == 'Connection lost' && !_isCallEnded) {
+          _endCall(userInitiated: false);
+        }
+      });
+    }
   }
 
   Future<void> _createOffer() async {
-    final offer = await _peerConnection!.createOffer();
-    await _peerConnection!.setLocalDescription(offer);
+    if (!mounted || _isCallEnded) return;
+    
+    try {
+      final offer = await _peerConnection!.createOffer();
+      if (_isCallEnded) return; // Check if call ended during async operation
+      
+      await _peerConnection!.setLocalDescription(offer);
+      if (_isCallEnded) return;
 
-    await _firestore.collection('calls').doc(widget.conversationId).set({
-      'type': 'offer',
-      'sdp': offer.sdp,
-      'callerId': widget.callerId,
-      'receiverId': widget.receiverId,
-      'isVideo': widget.isVideoCall,
-    });
+      await _firestore.collection('calls').doc(widget.conversationId).update({
+        'type': 'offer',
+        'sdp': offer.sdp,
+      });
 
-    // Listen for answer
-    _firestore.collection('calls').doc(widget.conversationId).snapshots().listen((snapshot) async {
-      final data = snapshot.data();
-      if (data == null) return;
+      // Listen for answer
+      _answerSubscription = _firestore
+          .collection('calls')
+          .doc(widget.conversationId)
+          .snapshots()
+          .listen(
+            (snapshot) async {
+              if (!mounted || _isCallEnded) {
+                _answerSubscription?.cancel();
+                return;
+              }
+              
+              if (!snapshot.exists) return;
 
-      if (data['type'] == 'answer' && (await _peerConnection?.getRemoteDescription()) == null) {
-        final answer = RTCSessionDescription(data['sdp'], data['type']);
-        await _peerConnection?.setRemoteDescription(answer);
-      }
-    });
+              final data = snapshot.data();
+              if (data == null) return;
+
+              if (data['type'] == 'answer' && data['sdp'] != null) {
+                try {
+                  if (_isCallEnded) return;
+                  
+                  final remoteDesc = await _peerConnection?.getRemoteDescription();
+                  if (remoteDesc == null && mounted && !_isCallEnded) {
+                    final answer = RTCSessionDescription(
+                      data['sdp'],
+                      data['type'],
+                    );
+                    await _peerConnection?.setRemoteDescription(answer);
+                  }
+                } catch (e) {
+                  debugPrint('Error setting remote description: $e');
+                }
+              }
+            },
+            onError: (e) {
+              debugPrint('Error listening for answer: $e');
+            },
+          );
+    } catch (e) {
+      _handleError('Error creating offer: $e');
+    }
   }
 
   Future<void> _listenForOffer() async {
-    final doc = await _firestore.collection('calls').doc(widget.conversationId).get();
+    if (!mounted || _isCallEnded) return;
+    
+    try {
+      final doc = await _firestore.collection('calls').doc(widget.conversationId).get();
+      if (!mounted || _isCallEnded) return;
 
-    if (!doc.exists) return;
-    final data = doc.data();
-    if (data == null || data['type'] != 'offer') return;
+      if (!doc.exists || doc.data() == null) {
+        _handleError('Call offer not found');
+        return;
+      }
 
-    final offer = RTCSessionDescription(data['sdp'], data['type']);
-    await _peerConnection?.setRemoteDescription(offer);
+      final data = doc.data()!;
+      if (data['type'] != 'offer' || data['sdp'] == null) {
+        _handleError('Invalid call offer');
+        return;
+      }
 
-    final answer = await _peerConnection!.createAnswer();
-    await _peerConnection!.setLocalDescription(answer);
+      final offer = RTCSessionDescription(data['sdp'], data['type']);
+      await _peerConnection?.setRemoteDescription(offer);
+    } catch (e) {
+      _handleError('Error processing offer: $e');
+    }
+  }
 
-    await _firestore.collection('calls').doc(widget.conversationId).update({
-      'type': 'answer',
-      'sdp': answer.sdp,
-    });
+  Future<void> _acceptCall() async {
+    if (!mounted || _isCallEnded) return;
+    
+    try {
+      setState(() {
+        _callStatus = 'Connecting...';
+      });
+
+      // Create answer
+      final answer = await _peerConnection!.createAnswer();
+      if (!mounted || _isCallEnded) return;
+      
+      await _peerConnection!.setLocalDescription(answer);
+      if (!mounted || _isCallEnded) return;
+
+      // Send answer to caller
+      await _firestore.collection('calls').doc(widget.conversationId).update({
+        'type': 'answer',
+        'sdp': answer.sdp,
+        'status': 'accepted',
+      });
+
+      if (mounted) {
+        setState(() {
+          _isCallAccepted = true;
+        });
+      }
+    } catch (e) {
+      _handleError('Error accepting call: $e');
+    }
+  }
+
+  Future<void> _declineCall() async {
+    try {
+      await _firestore.collection('calls').doc(widget.conversationId).update({
+        'status': 'declined',
+      });
+
+      _endCall(userInitiated: true);
+    } catch (e) {
+      _handleError('Error declining call: $e');
+    }
   }
 
   void _listenForIceCandidates() {
-    _firestore
+    _iceCandidatesSubscription = _firestore
         .collection('calls')
         .doc(widget.conversationId)
         .collection('iceCandidates')
+        .where('fromCaller', isEqualTo: !_isCaller)
         .snapshots()
-        .listen((snapshot) {
-      for (var doc in snapshot.docs) {
-        final data = doc.data();
-        if (data['candidate'] != null) {
-          final candidate = RTCIceCandidate(
-            data['candidate'],
-            data['sdpMid'],
-            data['sdpMLineIndex'],
-          );
-          _peerConnection?.addCandidate(candidate);
-        }
-      }
-    });
+        .listen(
+          (snapshot) {
+            if (!mounted || _isCallEnded) {
+              _iceCandidatesSubscription?.cancel();
+              return;
+            }
+            
+            for (var change in snapshot.docChanges) {
+              if (change.type == DocumentChangeType.added) {
+                final data = change.doc.data();
+                if (data != null && data['candidate'] != null) {
+                  try {
+                    final candidate = RTCIceCandidate(
+                      data['candidate'],
+                      data['sdpMid'],
+                      data['sdpMLineIndex'],
+                    );
+                    _peerConnection?.addCandidate(candidate);
+                  } catch (e) {
+                    debugPrint('Error adding ICE candidate: $e');
+                  }
+                }
+              }
+            }
+          },
+          onError: (e) {
+            debugPrint('Error listening for ICE candidates: $e');
+          },
+        );
   }
 
-  Future<void> _endCall() async {
-    await _localStream?.dispose();
-    await _peerConnection?.close();
+  Future<void> _endCall({bool userInitiated = true}) async {
+    if (_isCallEnded) return;
 
-    // Cleanup Firestore call document and candidates
-    await _firestore
-        .collection('calls')
-        .doc(widget.conversationId)
-        .collection('iceCandidates')
-        .get()
-        .then((snapshot) {
-      for (var doc in snapshot.docs) {
-        doc.reference.delete();
+    // Set this flag first to prevent multiple calls to endCall
+    _isCallEnded = true;
+    
+    if (mounted) {
+      setState(() {
+        _callStatus = 'Call ended';
+      });
+    }
+
+    // Stop timer
+    _callTimer?.cancel();
+
+    // Clean up subscriptions
+    _callStatusSubscription?.cancel();
+    _iceCandidatesSubscription?.cancel();
+    _answerSubscription?.cancel();
+
+    // Update call status in Firestore if user initiated
+    if (userInitiated) {
+      try {
+        await _firestore.collection('calls').doc(widget.conversationId).update({
+          'status': 'ended',
+          'endedAt': FieldValue.serverTimestamp(),
+        });
+      } catch (e) {
+        debugPrint('Error updating call status: $e');
+      }
+    }
+
+    // Clean up WebRTC resources
+    try {
+      await _localStream?.dispose();
+      await _peerConnection?.close();
+    } catch (e) {
+      debugPrint('Error cleaning up WebRTC: $e');
+    }
+
+    // Cleanup Firestore call document after delay
+    Future.delayed(const Duration(seconds: 2), () async {
+      try {
+        // Delete ICE candidates
+        final candidatesSnapshot = await _firestore
+            .collection('calls')
+            .doc(widget.conversationId)
+            .collection('iceCandidates')
+            .get();
+
+        for (var doc in candidatesSnapshot.docs) {
+          await doc.reference.delete();
+        }
+
+        // Don't delete the main call document so we keep call history
+      } catch (e) {
+        debugPrint('Error cleaning up Firestore: $e');
       }
     });
 
-    await _firestore.collection('calls').doc(widget.conversationId).delete();
+    // Exit the call screen
+    if (mounted) {
+      Navigator.pop(context);
+    }
+  }
 
-    Navigator.pop(context);
+  void _toggleMute() {
+    if (_localStream != null && mounted) {
+      final audioTrack = _localStream!.getAudioTracks().firstOrNull;
+      if (audioTrack != null) {
+        setState(() {
+          _isMicMuted = !_isMicMuted;
+          audioTrack.enabled = !_isMicMuted;
+        });
+      }
+    }
+  }
+
+  void _toggleCamera() {
+    if (_localStream != null && widget.isVideoCall && mounted) {
+      final videoTrack = _localStream!.getVideoTracks().firstOrNull;
+      if (videoTrack != null) {
+        setState(() {
+          _isCameraOff = !_isCameraOff;
+          videoTrack.enabled = !_isCameraOff;
+        });
+      }
+    }
+  }
+
+  void _switchCamera() async {
+    if (_localStream != null && widget.isVideoCall) {
+      final videoTrack = _localStream!.getVideoTracks().firstOrNull;
+      if (videoTrack != null) {
+        await Helper.switchCamera(videoTrack);
+      }
+    }
+  }
+
+  void _toggleSpeaker() {
+    if (mounted) {
+      setState(() {
+        _isSpeakerOn = !_isSpeakerOn;
+      });
+    }
+    // Note: This requires platform-specific implementation
+    // For Android, you'd use AudioManager, for iOS AVAudioSession
+  }
+
+  void _handleError(String message) {
+    debugPrint('Call error: $message');
+    if (mounted && !_isCallEnded) {
+      setState(() {
+        _callStatus = 'Error: $message';
+      });
+
+      // Show error to user
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+
+      // Close call screen after delay
+      Future.delayed(const Duration(seconds: 2), () {
+        if (mounted && !_isCallEnded) {
+          _endCall(userInitiated: false);
+        }
+      });
+    }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _callTimer?.cancel();
+    _callStatusSubscription?.cancel();
+    _iceCandidatesSubscription?.cancel();
+    _answerSubscription?.cancel();
     _localRenderer.dispose();
     _remoteRenderer.dispose();
     _localStream?.dispose();
-    _peerConnection?.dispose();
+    _peerConnection?.close();
     super.dispose();
+  }
+
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final hours = twoDigits(duration.inHours);
+    final minutes = twoDigits(duration.inMinutes.remainder(60));
+    final seconds = twoDigits(duration.inSeconds.remainder(60));
+    return hours == '00' ? '$minutes:$seconds' : '$hours:$minutes:$seconds';
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.isVideoCall ? 'Video Call' : 'Voice Call'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.call_end, color: Colors.red),
-            onPressed: _endCall,
+    return WillPopScope(
+      onWillPop: () async {
+        _endCall();
+        return false; // Don't allow back button to pop directly
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: SafeArea(
+          child: Stack(
+            children: [
+              // Video Streams
+              if (widget.isVideoCall) ...[
+                // Remote video (full screen)
+                if (_isConnected && _remoteRenderer.srcObject != null)
+                  Positioned.fill(
+                    child: RTCVideoView(
+                      _remoteRenderer,
+                      objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                    ),
+                  ),
+                // Local video (picture-in-picture)
+                if (_localRenderer.srcObject != null)
+                  Positioned(
+                    right: 20,
+                    top: 20,
+                    width: 100,
+                    height: 150,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.white, width: 2),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: RTCVideoView(
+                          _localRenderer,
+                          mirror: true,
+                          objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                        ),
+                      ),
+                    ),
+                  ),
+              ] else ...[
+                // Audio call UI
+                Positioned.fill(
+                  child: Container(
+                    color: Colors.blueGrey.shade900,
+                    child: Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          CircleAvatar(
+                            radius: 70,
+                            backgroundColor: Colors.blueGrey.shade700,
+                            child: Text(
+                              _peerName?.isNotEmpty == true
+                                  ? _peerName![0].toUpperCase()
+                                  : '?',
+                              style: const TextStyle(
+                                fontSize: 50,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          if (_isConnected) _buildWaveform(),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+
+              // Call information overlay
+              Positioned(
+                top: 20,
+                left: 0,
+                right: 0,
+                child: Column(
+                  children: [
+                    Text(
+                      _peerName ?? 'Connecting...',
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _isCallAccepted
+                          ? _formatDuration(_callDuration)
+                          : _callStatus,
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: Colors.white.withOpacity(0.8),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // Call controls
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 40,
+                child: Column(
+                  children: [
+                    // Call controls
+                    Padding(
+                      padding: const EdgeInsets.only(top: 20.0),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          // Mute button
+                          CircleAvatar(
+                            radius: 25,
+                            backgroundColor: _isMicMuted
+                                ? Colors.red.withOpacity(0.8)
+                                : Colors.white.withOpacity(0.3),
+                            child: IconButton(
+                              icon: Icon(
+                                _isMicMuted ? Icons.mic_off : Icons.mic,
+                                color: Colors.white,
+                              ),
+                              onPressed: _toggleMute,
+                            ),
+                          ),
+
+                          // Video toggle (only for video calls)
+                          if (widget.isVideoCall)
+                            CircleAvatar(
+                              radius: 25,
+                              backgroundColor: _isCameraOff
+                                  ? Colors.red.withOpacity(0.8)
+                                  : Colors.white.withOpacity(0.3),
+                              child: IconButton(
+                                icon: Icon(
+                                  _isCameraOff ? Icons.videocam_off : Icons.videocam,
+                                  color: Colors.white,
+                                ),
+                                onPressed: _toggleCamera,
+                              ),
+                            ),
+
+                          // End call button
+                          CircleAvatar(
+                            radius: 30,
+                            backgroundColor: Colors.red,
+                            child: IconButton(
+                              icon: const Icon(
+                                Icons.call_end,
+                                color: Colors.white,
+                              ),
+                              onPressed: () => _endCall(),
+                            ),
+                          ),
+
+                          // Speaker toggle
+                          CircleAvatar(
+                            radius: 25,
+                            backgroundColor: _isSpeakerOn
+                                ? Colors.blue.withOpacity(0.8)
+                                : Colors.white.withOpacity(0.3),
+                            child: IconButton(
+                              icon: Icon(
+                                _isSpeakerOn ? Icons.volume_up : Icons.volume_down,
+                                color: Colors.white,
+                              ),
+                              onPressed: _toggleSpeaker,
+                            ),
+                          ),
+
+                          // Camera switch (only for video calls)
+                          if (widget.isVideoCall)
+                            CircleAvatar(
+                              radius: 25,
+                              backgroundColor: Colors.white.withOpacity(0.3),
+                              child: IconButton(
+                                icon: const Icon(
+                                  Icons.switch_camera,
+                                  color: Colors.white,
+                                ),
+                                onPressed: _switchCamera,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
-      body: Center(
-        child: widget.isVideoCall
-            ? Column(
-                children: [
-                  Expanded(child: RTCVideoView(_remoteRenderer)),
-                  Expanded(child: RTCVideoView(_localRenderer, mirror: true)),
-                ],
-              )
-            : const Icon(Icons.call, size: 100, color: Colors.green),
+    );
+  }
+
+  Widget _buildWaveform() {
+    return SizedBox(
+      height: 50,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: List.generate(7, (index) => _buildWaveBar(index)),
+      ),
+    );
+  }
+
+  Widget _buildWaveBar(int index) {
+    // Simulate audio visualization with animated bars
+    return AnimatedContainer(
+      duration: Duration(milliseconds: 300 + (index * 100)),
+      width: 6,
+      height: _isMicMuted ? 10 : 20.0 + (index * 5) % 30,
+      margin: const EdgeInsets.symmetric(horizontal: 3),
+      decoration: BoxDecoration(
+        color: Colors.blue.shade400,
+        borderRadius: BorderRadius.circular(3),
       ),
     );
   }

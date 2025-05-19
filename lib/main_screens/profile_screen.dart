@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -9,7 +10,8 @@ import 'package:mime/mime.dart';
 import '../authentication_screens/login_screen.dart';
 import '../sub_screens/settings_screen.dart';
 import 'package:image_cropper/image_cropper.dart';
-
+import 'package:flutter_image_compress/flutter_image_compress.dart';
+import 'package:dio/dio.dart';
 import '../widgets/helper.dart';
 
 
@@ -26,6 +28,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   User? _currentUser;
   Map<String, dynamic> _userData = {};
   bool _isLoading = true;
+  // Add these to your class variables
+  final _uploadCancelToken = CancelToken();
+  bool _isUploading = false;
+  double _uploadProgress = 0;
 
   @override
   void initState() {
@@ -79,76 +85,144 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+
 Future<void> _updateProfilePicture() async {
+  final currentContext = context;
+  if (currentContext == null || !currentContext.mounted) return;
+  
   if (_currentUser == null) {
     _showSnackBar('User not logged in.', error: true);
     return;
   }
 
   try {
+    // Cancel any existing upload
+    _uploadCancelToken.cancel();
+    
     // Pick image from gallery
-    final XFile? pickedFile = await ImagePicker().pickImage(source: ImageSource.gallery);
-
-    if (pickedFile == null) {
-      _showSnackBar('No image selected.', error: true);
-      return;
-    }
-
-    // Crop the image
-    final CroppedFile? croppedFile = await ImageCropper().cropImage(
-      sourcePath: pickedFile.path,
-      aspectRatio: const CropAspectRatio(ratioX: 1, ratioY: 1),
-      compressQuality: 75,
-      uiSettings: [
-        AndroidUiSettings(
-          toolbarTitle: 'Crop Image',
-          toolbarColor: Theme.of(context).primaryColor,
-          toolbarWidgetColor: Colors.white,
-          lockAspectRatio: true,
-        ),
-        IOSUiSettings(
-          title: 'Crop Image',
-          aspectRatioLockEnabled: true,
-        ),
-      ],
+    final XFile? pickedFile = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      requestFullMetadata: false, // Faster picking
     );
 
-    if (croppedFile == null) {
-      _showSnackBar('Image cropping canceled.', error: true);
+    if (pickedFile == null) return;
+
+    // Show loading dialog immediately
+    _showUploadDialog(currentContext);
+
+    // Process image in background isolate
+    final processedFile = await _processImageInIsolate(File(pickedFile.path));
+    if (processedFile == null) {
+      if (currentContext.mounted) Navigator.pop(currentContext);
       return;
     }
 
-    // Validate MIME type
-    final mimeType = lookupMimeType(croppedFile.path);
-    if (mimeType == null || !mimeType.startsWith('image')) {
-      _showSnackBar('Please select a valid image file.', error: true);
-      return;
-    }
+    // Upload with progress monitoring
+    setState(() {
+      _isUploading = true;
+      _uploadProgress = 0;
+    });
 
-    final File imageFile = File(croppedFile.path); // ✅ Proper conversion
+    final ref = FirebaseStorage.instance
+        .ref()
+        .child('profile_pictures')
+        .child('${_currentUser!.uid}.jpg');
 
-    // Show loading dialog
-    UIHelper.showLoadingDialog(context, 'Uploading image...');
+    final uploadTask = ref.putFile(
+      processedFile,
+      SettableMetadata(contentType: 'image/jpeg'),
+    );
 
-    // Upload to Firebase Storage
-    final ref = FirebaseStorage.instance.ref('profile_pictures/${_currentUser!.uid}.jpg');
-    await ref.putFile(imageFile);
+    uploadTask.snapshotEvents.listen((taskSnapshot) {
+      setState(() {
+        _uploadProgress = taskSnapshot.bytesTransferred / taskSnapshot.totalBytes;
+      });
+    });
+
+    await uploadTask;
+
     final photoURL = await ref.getDownloadURL();
 
-    // Update photo URL
+    // Update user data
     await _currentUser!.updatePhotoURL(photoURL);
-    await _firestore.collection('users').doc(_currentUser!.uid).update({'photoURL': photoURL});
+    await _firestore
+        .collection('users')
+        .doc(_currentUser!.uid)
+        .update({'photoURL': photoURL});
 
-    Navigator.pop(context); // Close loading dialog
-    setState(() => _userData['photoURL'] = photoURL);
-    _showSnackBar('Profile picture updated!');
+    if (currentContext.mounted) {
+      Navigator.pop(currentContext);
+      setState(() {
+        _userData['photoURL'] = photoURL;
+        _isUploading = false;
+      });
+      _showSnackBar('Profile picture updated!');
+    }
   } catch (e) {
-    if (Navigator.canPop(context)) Navigator.pop(context); // Avoid popping if already closed
-    _showSnackBar('Failed to update photo: ${e.toString()}', error: true);
+    if (!(e is DioError && e.type == DioErrorType.cancel) && currentContext.mounted) {
+      Navigator.pop(currentContext);
+      _showSnackBar('Upload failed: ${e.toString()}', error: true);
+    }
+    setState(() => _isUploading = false);
   }
 }
 
+Future<File?> _processImageInIsolate(File originalFile) async {
+  try {
+    return await compute(_compressAndResizeImage, originalFile.path);
+  } catch (e) {
+    debugPrint('Image processing error: $e');
+    return null;
+  }
+}
 
+static Future<File> _compressAndResizeImage(String path) async {
+  final file = File(path);
+  final result = await FlutterImageCompress.compressAndGetFile(
+    file.absolute.path,
+    '${file.path}_compressed.jpg',
+    quality: 80,
+    minWidth: 800,
+    minHeight: 800,
+  );
+  return File(result!.path);
+}
+
+void _showUploadDialog(BuildContext context) {
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => AlertDialog(
+      title: const Text('Uploading Profile Picture'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          LinearProgressIndicator(
+            value: _isUploading ? _uploadProgress : null,
+          ),
+          const SizedBox(height: 16),
+          if (_isUploading)
+            Text('${(_uploadProgress * 100).toStringAsFixed(1)}%'),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            _uploadCancelToken.cancel();
+            Navigator.pop(context);
+          },
+          child: const Text('Cancel'),
+        ),
+      ],
+    ),
+  );
+}
+
+@override
+void dispose() {
+  _uploadCancelToken.cancel();
+  super.dispose();
+}
 
   Future<void> _updateField(String title, String field, {bool isPassword = false, TextInputType? inputType}) async {
     final controller = TextEditingController(text: _userData[field] ?? '');

@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
 import '../widgets/message_bubble.dart';
 import '../widgets/message_input.dart';
@@ -21,6 +22,7 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
+  final ValueNotifier<ReplyData?> replyNotifier = ValueNotifier(null);
   final ScrollController _scrollController = ScrollController();
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -100,12 +102,13 @@ class _ChatScreenState extends State<ChatScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (ctx) => CallScreen(
-          conversationId: widget.conversationId,
-          callerId: _currentUserId,
-          receiverId: _otherUserId,
-          isVideoCall: false,
-        ),
+        builder:
+            (ctx) => CallScreen(
+              conversationId: widget.conversationId,
+              callerId: _currentUserId,
+              receiverId: _otherUserId,
+              isVideoCall: false,
+            ),
       ),
     );
   }
@@ -114,24 +117,26 @@ class _ChatScreenState extends State<ChatScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (ctx) => CallScreen(
-          conversationId: widget.conversationId,
-          callerId: _currentUserId,
-          receiverId: _otherUserId,
-          isVideoCall: true,
-        ),
+        builder:
+            (ctx) => CallScreen(
+              conversationId: widget.conversationId,
+              callerId: _currentUserId,
+              receiverId: _otherUserId,
+              isVideoCall: true,
+            ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final messageStream = _firestore
-        .collection('conversations')
-        .doc(widget.conversationId)
-        .collection('messages')
-        .orderBy('timestamp', descending: true)
-        .snapshots();
+    final messageStream =
+        _firestore
+            .collection('conversations')
+            .doc(widget.conversationId)
+            .collection('messages')
+            .orderBy('timestamp', descending: true)
+            .snapshots();
 
     return Scaffold(
       appBar: AppBar(
@@ -199,7 +204,9 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           MessageInput(
             conversationId: widget.conversationId,
-            participants: widget.participants,
+            participants: widget.participants, onSend: () {
+              _scrollToBottom();
+            },
           ),
         ],
       ),
@@ -209,71 +216,83 @@ class _ChatScreenState extends State<ChatScreen> {
   void _showChatInfo(BuildContext context) {
     showModalBottomSheet(
       context: context,
-      builder: (ctx) => FutureBuilder<DocumentSnapshot>(
-        future: _firestore.collection('users').doc(_otherUserId).get(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
+      builder:
+          (ctx) => FutureBuilder<DocumentSnapshot>(
+            future: _firestore.collection('users').doc(_otherUserId).get(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
 
-          final user = snapshot.data?.data() as Map<String, dynamic>? ?? {};
+              final user = snapshot.data?.data() as Map<String, dynamic>? ?? {};
 
-          return Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                CircleAvatar(
-                  radius: 40,
-                  backgroundImage: user['photoURL'] != null
-                      ? NetworkImage(user['photoURL'])
-                      : null,
-                  child: user['photoURL'] == null
-                      ? const Icon(Icons.person, size: 40)
-                      : null,
+              return Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircleAvatar(
+                      radius: 40,
+                      backgroundImage:
+                          user['photoURL'] != null
+                              ? NetworkImage(user['photoURL'])
+                              : null,
+                      child:
+                          user['photoURL'] == null
+                              ? const Icon(Icons.person, size: 40)
+                              : null,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      user['displayName'] ?? 'Unknown',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      user['email'] ?? '',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 16),
+                    const Divider(),
+                    ListTile(
+                      leading: const Icon(Icons.delete),
+                      title: const Text('Delete conversation'),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _confirmDeleteConversation(context);
+                      },
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 16),
-                Text(
-                  user['displayName'] ?? 'Unknown',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  user['email'] ?? '',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-                const SizedBox(height: 16),
-                const Divider(),
-                ListTile(
-                  leading: const Icon(Icons.delete),
-                  title: const Text('Delete conversation'),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _confirmDeleteConversation(context);
-                  },
-                ),
-              ],
-            ),
-          );
-        },
-      ),
+              );
+            },
+          ),
     );
   }
 
   Future<void> _confirmDeleteConversation(BuildContext context) async {
     final confirm = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Delete Conversation?'),
-        content: const Text('All messages and calls will be permanently deleted.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+      builder:
+          (ctx) => AlertDialog(
+            title: const Text('Delete Conversation?'),
+            content: const Text(
+              'All messages and calls will be permanently deleted.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text(
+                  'Delete',
+                  style: TextStyle(color: Colors.red),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
     );
 
     if (confirm != true) return;
@@ -292,7 +311,9 @@ class _ChatScreenState extends State<ChatScreen> {
       }
 
       // Delete call data (calls + iceCandidates)
-      final callDocRef = _firestore.collection('calls').doc(widget.conversationId);
+      final callDocRef = _firestore
+          .collection('calls')
+          .doc(widget.conversationId);
       final callDoc = await callDocRef.get();
       if (callDoc.exists) {
         // Delete iceCandidates
@@ -305,7 +326,9 @@ class _ChatScreenState extends State<ChatScreen> {
       }
 
       // Delete conversation document
-      final conversationRef = _firestore.collection('conversations').doc(widget.conversationId);
+      final conversationRef = _firestore
+          .collection('conversations')
+          .doc(widget.conversationId);
       batch.delete(conversationRef);
 
       await batch.commit();
@@ -328,3 +351,4 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 }
+

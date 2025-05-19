@@ -1,1 +1,3 @@
-app crash when upload pic profile
+app crash when upload pic profile(fixed)
+work on emote/reply function
+work on call
