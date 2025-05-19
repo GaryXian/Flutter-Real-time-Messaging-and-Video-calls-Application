@@ -6,6 +6,8 @@ import 'package:realtime_message_calling/authentication_screens/reset_password_s
 import 'package:realtime_message_calling/home/home.dart';
 import 'register_screen.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:permission_handler/permission_handler.dart';
 //import 'reset_password_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -40,6 +42,59 @@ class _LoginScreenState extends State<LoginScreen> {
       SnackBar(content: Text("Login Failed: $e")),
     );
   }
+}
+Future<void> handleLogin(String email, String password) async {
+  try {
+    final credential = await FirebaseAuth.instance.signInWithEmailAndPassword(
+      email: email,
+      password: password,
+    );
+
+    // Request necessary permissions (Android/iOS)
+    await requestPermissions();
+
+    // Get FCM token after permissions granted
+    String? token = await FirebaseMessaging.instance.getToken();
+    print("FCM Token: $token");
+
+    // Store this token in Firestore under user profile (or wherever appropriate)
+    await FirebaseFirestore.instance.collection('users').doc(credential.user!.uid).update({
+       'fcmToken': token,
+     });
+
+    // Optionally: listen to foreground messages
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      print('Foreground Notification: ${message.notification?.title}');
+      // Show custom dialog/snackbar here if needed
+    });
+
+  } catch (e) {
+    print("Login error: $e");
+    // Show login error to user
+  }
+}
+Future<void> requestPermissions() async {
+  // For notification permission
+  final messaging = FirebaseMessaging.instance;
+
+  await messaging.requestPermission(
+    alert: true,
+    announcement: false,
+    badge: true,
+    carPlay: false,
+    criticalAlert: false,
+    provisional: false,
+    sound: true,
+  );
+
+  // Android-specific permissions (optional but recommended)
+  if (await Permission.notification.isDenied) {
+    await Permission.notification.request();
+  }
+
+  // (Optional) Also request microphone, camera if you're doing calls:
+  await Permission.microphone.request();
+  await Permission.camera.request();
 }
 
 

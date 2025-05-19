@@ -1,8 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
-
 import '../widgets/message_bubble.dart';
 import '../widgets/message_input.dart';
 import 'call_screen.dart';
@@ -60,33 +58,36 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _markMessagesAsReadOnce() async {
-    if (_messagesMarkedAsRead) return; // prevent re-trigger
-    _messagesMarkedAsRead = true;
+ Future<void> _markMessagesAsReadOnce() async {
+  if (_messagesMarkedAsRead) return;
+  _messagesMarkedAsRead = true;
 
-    final unreadMessages =
-        await _firestore
-            .collection('conversations')
-            .doc(widget.conversationId)
-            .collection('messages')
-            .where('senderId', isEqualTo: _otherUserId)
-            .where('isRead', isEqualTo: false)
-            .get();
+  final unreadMessages = await _firestore
+      .collection('conversations')
+      .doc(widget.conversationId)
+      .collection('messages')
+      .where('senderId', isEqualTo: _otherUserId)
+      .where('isRead', isEqualTo: false)
+      .get();
 
-    if (unreadMessages.docs.isEmpty) return;
+  if (unreadMessages.docs.isEmpty) return;
 
-    final batch = _firestore.batch();
-    for (final doc in unreadMessages.docs) {
-      batch.update(doc.reference, {'isRead': true, 'readAt': Timestamp.now()});
-    }
-
-    batch.update(
-      _firestore.collection('conversations').doc(widget.conversationId),
-      {'unreadCount.$_currentUserId': 0},
-    );
-
-    await batch.commit();
+  final batch = _firestore.batch();
+  for (final doc in unreadMessages.docs) {
+    batch.update(doc.reference, {
+      'isRead': true,
+      'readAt': Timestamp.now(),
+    });
   }
+
+  batch.update(
+    _firestore.collection('conversations').doc(widget.conversationId),
+    {'unreadCount.$_currentUserId': 0},
+  );
+
+  await batch.commit();
+}
+
 
   void _scrollToBottom() {
     if (_scrollController.hasClients) {
@@ -185,18 +186,64 @@ class _ChatScreenState extends State<ChatScreen> {
                   itemCount: messages.length,
                   itemBuilder: (ctx, index) {
                     final message = messages[index];
-                    return MessageBubble(
-                      key: ValueKey(message.id),
-                      messageId: message.id,
-                      senderId: message['senderId'],
-                      content: message['content'],
-                      messageType: message['messageType'],
-                      timestamp: message['timestamp'] as Timestamp,
-                      isMe: message['senderId'] == _currentUserId,
-                      conversationId: widget.conversationId,
-                      fileUrl: message['fileUrl'],
-                      fileType: message['fileType'],
-                    );
+                    final data = message.data() as Map<String, dynamic>;
+                    final messageType = data['messageType'] ?? 'text';
+
+                    if (messageType == 'call') {
+                      final isMe = data['senderId'] == _currentUserId;
+                      final callType = data['callType'] ?? 'voice';
+                      final status = data['status'] ?? 'missed';
+                      final timestamp = data['timestamp'];
+                      final time =
+                          (timestamp is Timestamp)
+                              ? timestamp.toDate()
+                              : DateTime.now();
+
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Center(
+                          child: Card(
+                            color: Colors.grey[200],
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 6,
+                                horizontal: 12,
+                              ),
+                              child: Text(
+                                '${isMe ? "You" : _otherUserName} ${status == "accepted" ? "had" : status} a $callType call\n${time.toLocal()}',
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(fontSize: 14),
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    } else {
+                      // Handle text, image, or file messages
+                      final content =
+                          data.containsKey('content') ? data['content'] : '';
+                      final senderId = data['senderId'] ?? '';
+                      final timestamp = data['timestamp'] ?? Timestamp.now();
+                      final fileUrl =
+                          data.containsKey('fileUrl') ? data['fileUrl'] : null;
+                      final fileType =
+                          data.containsKey('fileType')
+                              ? data['fileType']
+                              : null;
+
+                      return MessageBubble(
+                        key: ValueKey(message.id),
+                        messageId: message.id,
+                        senderId: senderId,
+                        content: content,
+                        messageType: messageType,
+                        timestamp: timestamp as Timestamp,
+                        isMe: senderId == _currentUserId,
+                        conversationId: widget.conversationId,
+                        fileUrl: fileUrl,
+                        fileType: fileType,
+                      );
+                    }
                   },
                 );
               },
@@ -204,7 +251,8 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           MessageInput(
             conversationId: widget.conversationId,
-            participants: widget.participants, onSend: () {
+            participants: widget.participants,
+            onSend: () {
               _scrollToBottom();
             },
           ),
@@ -351,4 +399,3 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 }
-
