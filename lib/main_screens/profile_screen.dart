@@ -6,13 +6,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
-import 'package:mime/mime.dart';
 import '../authentication_screens/login_screen.dart';
 import '../sub_screens/settings_screen.dart';
-import 'package:image_cropper/image_cropper.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:dio/dio.dart';
-import '../widgets/helper.dart';
 
 
 class ProfileScreen extends StatefulWidget {
