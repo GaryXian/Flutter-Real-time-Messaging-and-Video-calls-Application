@@ -352,7 +352,7 @@ Future<void> _loadMessages() async {
                           ? const Icon(Icons.person)
                           : null,
                 ),
-                title: Text(userData['displayName'] ?? 'Unknown'),
+                title: Text(userData['displayName'] ?? 'Unknown', style: TextStyle(fontWeight: FontWeight.bold),),
                 subtitle: Text(
                   (convo['lastMessage'] as String?)?.isNotEmpty == true
                       ? convo['lastMessage']
