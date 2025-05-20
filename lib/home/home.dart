@@ -5,7 +5,6 @@ import 'dart:async';
 import '../main_screens/friends_screen.dart';
 import '../main_screens/messages_screen.dart';
 import '../main_screens/profile_screen.dart';
-import '../screens/call_screen.dart';
 import '../widgets/call_service.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -76,63 +75,6 @@ class _HomePageState extends State<HomePage> {
     _callSubscription?.cancel();
   }
 
-  void _showIncomingCallDialog(String callerId, bool isVideoCall, String conversationId) async {
-    if (!mounted || ModalRoute.of(context)?.isCurrent != true) return;
-
-    final callerDoc = await _firestore.collection('users').doc(callerId).get();
-    final callerName = callerDoc['displayName'] ?? 'Unknown';
-
-    if (!mounted) return;
-
-    late BuildContext dialogContext;
-    final timer = Timer(const Duration(seconds: 30), () {
-      if (Navigator.of(dialogContext, rootNavigator: true).canPop()) {
-        Navigator.of(dialogContext, rootNavigator: true).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Call missed')),
-        );
-      }
-    });
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) {
-        dialogContext = ctx;
-        return AlertDialog(
-          title: Text('Incoming ${isVideoCall ? "Video" : "Voice"} Call'),
-          content: Text('$callerName is calling you'),
-          actions: [
-            TextButton(
-              onPressed: () {
-                timer.cancel();
-                Navigator.of(ctx).pop();
-              },
-              child: const Text('Decline'),
-            ),
-            TextButton(
-              onPressed: () {
-                timer.cancel();
-                Navigator.of(ctx).pop();
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => CallScreen(
-                      conversationId: conversationId,
-                      callerId: callerId,
-                      receiverId: _currentUserId!,
-                      isVideoCall: isVideoCall,
-                    ),
-                  ),
-                );
-              },
-              child: const Text('Accept'),
-            ),
-          ],
-        );
-      },
-    );
-  }
 
   @override
   Widget build(BuildContext context) {

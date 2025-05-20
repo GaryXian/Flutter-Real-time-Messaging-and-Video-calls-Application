@@ -1,3 +1,3 @@
 app crash when upload pic profile(fixed)
 work on emote/reply function
-work on call(double call error)
+work on call(phone auto end after ~20s)

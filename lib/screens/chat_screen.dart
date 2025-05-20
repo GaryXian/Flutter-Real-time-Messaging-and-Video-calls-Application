@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/message_input.dart';
 import 'call_screen.dart';
@@ -58,36 +59,64 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
- Future<void> _markMessagesAsReadOnce() async {
-  if (_messagesMarkedAsRead) return;
-  _messagesMarkedAsRead = true;
+  bool _isLoadingMore = false;
+  DocumentSnapshot? _lastDocument;
 
-  final unreadMessages = await _firestore
-      .collection('conversations')
-      .doc(widget.conversationId)
-      .collection('messages')
-      .where('senderId', isEqualTo: _otherUserId)
-      .where('isRead', isEqualTo: false)
-      .get();
+  Future<void> _loadMoreMessages() async {
+    if (_isLoadingMore) return;
 
-  if (unreadMessages.docs.isEmpty) return;
+    setState(() => _isLoadingMore = true);
 
-  final batch = _firestore.batch();
-  for (final doc in unreadMessages.docs) {
-    batch.update(doc.reference, {
-      'isRead': true,
-      'readAt': Timestamp.now(),
-    });
+    try {
+      final query = _firestore
+          .collection('conversations')
+          .doc(widget.conversationId)
+          .collection('messages')
+          .orderBy('timestamp', descending: true)
+          .startAfterDocument(_lastDocument!)
+          .limit(20); // Adjust limit as needed
+
+      final snapshot = await query.get();
+
+      if (snapshot.docs.isNotEmpty) {
+        _lastDocument = snapshot.docs.last;
+        // You'll need to merge these new messages with your existing ones
+        // This depends on how you're managing your message stream
+      }
+    } catch (e) {
+      debugPrint('Error loading more messages: $e');
+    } finally {
+      setState(() => _isLoadingMore = false);
+    }
   }
 
-  batch.update(
-    _firestore.collection('conversations').doc(widget.conversationId),
-    {'unreadCount.$_currentUserId': 0},
-  );
+  Future<void> _markMessagesAsReadOnce() async {
+    if (_messagesMarkedAsRead) return;
+    _messagesMarkedAsRead = true;
 
-  await batch.commit();
-}
+    final unreadMessages =
+        await _firestore
+            .collection('conversations')
+            .doc(widget.conversationId)
+            .collection('messages')
+            .where('senderId', isEqualTo: _otherUserId)
+            .where('isRead', isEqualTo: false)
+            .get();
 
+    if (unreadMessages.docs.isEmpty) return;
+
+    final batch = _firestore.batch();
+    for (final doc in unreadMessages.docs) {
+      batch.update(doc.reference, {'isRead': true, 'readAt': Timestamp.now()});
+    }
+
+    batch.update(
+      _firestore.collection('conversations').doc(widget.conversationId),
+      {'unreadCount.$_currentUserId': 0},
+    );
+
+    await batch.commit();
+  }
 
   void _scrollToBottom() {
     if (_scrollController.hasClients) {
@@ -180,75 +209,114 @@ class _ChatScreenState extends State<ChatScreen> {
                   }
                 });
 
-                return ListView.builder(
-                  controller: _scrollController,
-                  reverse: true,
-                  itemCount: messages.length,
-                  itemBuilder: (ctx, index) {
-                    final message = messages[index];
-                    final data = message.data() as Map<String, dynamic>;
-                    final messageType = data['messageType'] ?? 'text';
+                return NotificationListener<ScrollNotification>(
+                  onNotification: (scrollNotification) {
+                    if (scrollNotification is ScrollEndNotification &&
+                        _scrollController.position.extentBefore == 0 &&
+                        !_isLoadingMore) {
+                      _loadMoreMessages();
+                      return true;
+                    }
+                    return false;
+                  },
+                  child: ListView.builder(
+                    controller: _scrollController,
+                    reverse: true,
+                    itemCount: messages.length + (_isLoadingMore ? 1 : 0),
+                    itemBuilder: (ctx, index) {
+                      // Show loading indicator at the top when loading more messages
+                      if (_isLoadingMore && index == messages.length) {
+                        return const Center(
+                          child: Padding(
+                            padding: EdgeInsets.all(8.0),
+                            child: CircularProgressIndicator(),
+                          ),
+                        );
+                      }
 
-                    if (messageType == 'call') {
-                      final isMe = data['senderId'] == _currentUserId;
-                      final callType = data['callType'] ?? 'voice';
-                      final status = data['status'] ?? 'missed';
-                      final timestamp = data['timestamp'];
-                      final time =
-                          (timestamp is Timestamp)
-                              ? timestamp.toDate()
-                              : DateTime.now();
+                      // Adjust index if we're loading more
+                      final messageIndex = _isLoadingMore ? index : index;
+                      if (messageIndex >= messages.length) return Container();
 
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        child: Center(
-                          child: Card(
-                            color: Colors.grey[200],
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                vertical: 6,
-                                horizontal: 12,
-                              ),
-                              child: Text(
-                                '${isMe ? "You" : _otherUserName} ${status == "accepted" ? "had" : status} a $callType call\n${time.toLocal()}',
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(fontSize: 14),
+                      final message = messages[messageIndex];
+                      final data = message.data() as Map<String, dynamic>;
+                      final messageType = data['messageType'] ?? 'text';
+
+                      if (messageType == 'call') {
+                        final isMe = data['senderId'] == _currentUserId;
+                        final callType = data['callType'] ?? 'voice';
+                        final status = data['status'] ?? 'missed';
+                        final timestamp = data['timestamp'];
+                        final time =
+                            (timestamp is Timestamp)
+                                ? timestamp.toDate()
+                                : DateTime.now();
+
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: Center(
+                            child: Card(
+                              color:
+                                  status == 'accepted'
+                                      ? Colors.green[100]
+                                      : Colors.red[100],
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 6,
+                                  horizontal: 12,
+                                ),
+                                child: Text(
+                                  '${isMe ? "You" : _otherUserName} '
+                                  '${status == "accepted" ? "answered" : status} '
+                                  'a $callType call\n${DateFormat('MMM d, h:mm a').format(time)}',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color:
+                                        status == 'accepted'
+                                            ? Colors.green[800]
+                                            : Colors.red[800],
+                                  ),
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      );
-                    } else {
-                      // Handle text, image, or file messages
-                      final content =
-                          data.containsKey('content') ? data['content'] : '';
-                      final senderId = data['senderId'] ?? '';
-                      final timestamp = data['timestamp'] ?? Timestamp.now();
-                      final fileUrl =
-                          data.containsKey('fileUrl') ? data['fileUrl'] : null;
-                      final fileType =
-                          data.containsKey('fileType')
-                              ? data['fileType']
-                              : null;
+                        );
+                      } else {
+                        // Handle text, image, or file messages
+                        final content =
+                            data.containsKey('content') ? data['content'] : '';
+                        final senderId = data['senderId'] ?? '';
+                        final timestamp = data['timestamp'] ?? Timestamp.now();
+                        final fileUrl =
+                            data.containsKey('fileUrl')
+                                ? data['fileUrl']
+                                : null;
+                        final fileType =
+                            data.containsKey('fileType')
+                                ? data['fileType']
+                                : null;
 
-                      return MessageBubble(
-                        key: ValueKey(message.id),
-                        messageId: message.id,
-                        senderId: senderId,
-                        content: content,
-                        messageType: messageType,
-                        timestamp: timestamp as Timestamp,
-                        isMe: senderId == _currentUserId,
-                        conversationId: widget.conversationId,
-                        fileUrl: fileUrl,
-                        fileType: fileType,
-                      );
-                    }
-                  },
+                        return MessageBubble(
+                          key: ValueKey(message.id),
+                          messageId: message.id,
+                          senderId: senderId,
+                          content: content,
+                          messageType: messageType,
+                          timestamp: timestamp as Timestamp,
+                          isMe: senderId == _currentUserId,
+                          conversationId: widget.conversationId,
+                          fileUrl: fileUrl,
+                          fileType: fileType,
+                        );
+                      }
+                    },
+                  ),
                 );
               },
             ),
           ),
+          // Your message input widget here
           MessageInput(
             conversationId: widget.conversationId,
             participants: widget.participants,

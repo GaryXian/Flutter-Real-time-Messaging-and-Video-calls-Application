@@ -4,6 +4,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'dart:async';
+import 'dart:io';
 
 class CallScreen extends StatefulWidget {
   final String conversationId;
@@ -40,6 +41,7 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
   bool _isSpeakerOn = true;
   bool _isCallAccepted = false;
   bool _isCallEnded = false;
+  bool? _actualIsVideoCall;
 
   StreamSubscription? _callStatusSubscription;
   StreamSubscription? _iceCandidatesSubscription;
@@ -55,8 +57,76 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _setupCall();
+    _fetchCallData();
     _fetchPeerName();
+  }
+
+  Future<void> _fetchCallData() async {
+    if (!mounted) return;
+
+    try {
+      final callDoc =
+          await FirebaseFirestore.instance
+              .collection('calls')
+              .doc(widget.conversationId)
+              .get();
+
+      if (!mounted) return;
+
+      if (!callDoc.exists) {
+        print('Call document does not exist, using default settings');
+        _initializeCallWithDefaults();
+        return;
+      }
+
+      final callData = callDoc.data();
+      if (callData == null) {
+        print('Call data is null, using default settings');
+        _initializeCallWithDefaults();
+        return;
+      }
+
+      // Update video call status based on current Firestore data
+      final callIsVideo = callData['isVideo'] ?? widget.isVideoCall;
+
+      // Only update if different from current setting
+      if (callIsVideo != widget.isVideoCall) {
+        print(
+          'Updating call type to ${callIsVideo ? "video" : "voice"} based on Firestore data',
+        );
+
+        if (mounted) {
+          setState(() {
+            // We can't directly modify widget.isVideoCall since it's final
+            // Instead, use a class variable to override behavior
+            _actualIsVideoCall = callIsVideo;
+          });
+        }
+      }
+
+      // Continue with call setup
+      _setupCall();
+    } catch (error) {
+      print('Error getting call data: $error');
+      // Fall back to initialization with provided parameters
+      _initializeCallWithDefaults();
+    }
+  }
+
+  void _initializeCallWithDefaults() {
+    if (!mounted) return;
+    _actualIsVideoCall = widget.isVideoCall;
+    _setupCall();
+  }
+
+  // Helper getter to determine whether to show video UI based on actual or default value
+  bool get _shouldShowVideoUI {
+    // If we have an override value, use that
+    if (_actualIsVideoCall != null) {
+      return _actualIsVideoCall!;
+    }
+    // Otherwise fall back to the widget parameter
+    return widget.isVideoCall;
   }
 
   @override
@@ -69,22 +139,22 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _fetchPeerName() async {
+    if (!mounted) return;
+
     try {
       // Determine if current user is caller or receiver
       final currentUserId = _auth.currentUser?.uid;
       _isCaller = widget.callerId == currentUserId;
-      
+
       // Get the ID of the peer (other person)
       final peerId = _isCaller ? widget.receiverId : widget.callerId;
-      
+
       final userDoc = await _firestore.collection('users').doc(peerId).get();
 
-      if (userDoc.exists && userDoc.data() != null) {
-        if (mounted) {
-          setState(() {
-            _peerName = userDoc.data()!['displayName'] ?? 'Unknown';
-          });
-        }
+      if (userDoc.exists && userDoc.data() != null && mounted) {
+        setState(() {
+          _peerName = userDoc.data()!['displayName'] ?? 'Unknown';
+        });
       }
     } catch (e) {
       debugPrint('Error fetching peer name: $e');
@@ -93,7 +163,7 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
 
   Future<void> _setupCall() async {
     if (!mounted) return;
-    
+
     setState(() {
       _callStatus = 'Setting up call...';
     });
@@ -107,20 +177,30 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
     _isCaller = widget.callerId == currentUserId;
 
     try {
-      // Initialize renderers first
-      await _localRenderer.initialize();
-      await _remoteRenderer.initialize();
-      
-      // Request permissions and immediately start call flow
+      // Initialize renderers based on call type
+      await _initRenderers();
+
+      // Request permissions and start call flow
       await _initCallFlow();
     } catch (e) {
       _handleError('Failed to initialize call: $e');
     }
   }
 
+  Future<void> _initRenderers() async {
+    if (!mounted) return;
+
+    try {
+      await _localRenderer.initialize();
+      await _remoteRenderer.initialize();
+    } catch (e) {
+      throw Exception('Failed to initialize renderers: $e');
+    }
+  }
+
   Future<void> _initCallFlow() async {
     if (!mounted) return;
-    
+
     // Request permissions
     final hasPermissions = await _requestCallPermissions();
     if (!hasPermissions || !mounted) return;
@@ -130,7 +210,7 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
       await _firestore.collection('calls').doc(widget.conversationId).set({
         'callerId': widget.callerId,
         'receiverId': widget.receiverId,
-        'isVideo': widget.isVideoCall,
+        'isVideo': _shouldShowVideoUI,
         'status': 'ringing',
         'startedAt': FieldValue.serverTimestamp(),
       });
@@ -143,7 +223,7 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
       // Initialize media and start connections
       await _initMediaDevices();
       if (!mounted) return;
-      
+
       await _initPeerConnection();
       if (!mounted) return;
 
@@ -186,7 +266,7 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
 
   Future<bool> _requestCallPermissions() async {
     if (!mounted) return false;
-    
+
     setState(() {
       _callStatus = 'Checking permissions...';
     });
@@ -198,14 +278,15 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
     microphoneGranted = await Permission.microphone.request().isGranted;
 
     // Only request camera for video calls
-    if (widget.isVideoCall) {
+    if (_shouldShowVideoUI) {
       cameraGranted = await Permission.camera.request().isGranted;
     }
 
     // Check if all required permissions were granted
-    final hasRequiredPermissions = widget.isVideoCall
-        ? (cameraGranted && microphoneGranted)
-        : microphoneGranted;
+    final hasRequiredPermissions =
+        _shouldShowVideoUI
+            ? (cameraGranted && microphoneGranted)
+            : microphoneGranted;
 
     if (!hasRequiredPermissions && mounted) {
       _handleError('Required permissions were not granted');
@@ -223,7 +304,7 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
 
   void _handleCallStatusChange(DocumentSnapshot snapshot) {
     if (!mounted) return;
-    
+
     if (!snapshot.exists || snapshot.data() == null) {
       // Call document deleted, end call if not already ended
       if (!_isCallEnded) {
@@ -283,36 +364,39 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
         .collection('messages')
         .add({
           'senderId': widget.callerId,
-          'text': '${widget.isVideoCall ? 'Video' : 'Audio'} call',
+          'text': '${_shouldShowVideoUI ? 'Video' : 'Audio'} call',
           'timestamp': FieldValue.serverTimestamp(),
           'isCallHistory': true,
-          'callType': widget.isVideoCall ? 'video' : 'audio',
+          'callType': _shouldShowVideoUI ? 'video' : 'audio',
         });
   }
 
   Future<void> _initMediaDevices() async {
     if (!mounted) return;
-    
+
     try {
       // Configure media constraints based on call type
-      final mediaConstraints = widget.isVideoCall
-          ? {
-              'audio': true,
-              'video': {
-                'facingMode': 'user',
-                'width': {'ideal': 640},
-                'height': {'ideal': 480},
+      final mediaConstraints =
+          _shouldShowVideoUI
+              ? {
+                'audio': true,
+                'video': {
+                  'facingMode': 'user',
+                  'width': {'ideal': 640},
+                  'height': {'ideal': 480},
+                },
               }
-            }
-          : {'audio': true, 'video': false};
+              : {'audio': true, 'video': false};
 
       try {
-        _localStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
+        _localStream = await navigator.mediaDevices.getUserMedia(
+          mediaConstraints,
+        );
       } catch (e) {
         debugPrint('getUserMedia error: $e');
-        
+
         // Try with simpler constraints if failed
-        if (widget.isVideoCall) {
+        if (_shouldShowVideoUI) {
           _localStream = await navigator.mediaDevices.getUserMedia({
             'audio': true,
             'video': true,
@@ -339,7 +423,7 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
 
   Future<void> _initPeerConnection() async {
     if (!mounted) return;
-    
+
     final config = {
       'iceServers': [
         {'urls': 'stun:stun.l.google.com:19302'},
@@ -385,7 +469,7 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
       _peerConnection?.onConnectionState = (state) {
         debugPrint('Connection state changed: $state');
         if ((state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
-            state == RTCPeerConnectionState.RTCPeerConnectionStateClosed) && 
+                state == RTCPeerConnectionState.RTCPeerConnectionStateClosed) &&
             !_isCallEnded) {
           _handleConnectionFailure();
         }
@@ -393,13 +477,16 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
 
       _peerConnection?.onIceConnectionState = (state) {
         debugPrint('ICE connection state changed: $state');
-        if (state == RTCIceConnectionState.RTCIceConnectionStateConnected && mounted) {
+        if (state == RTCIceConnectionState.RTCIceConnectionStateConnected &&
+            mounted) {
           setState(() {
             _isConnected = true;
             _callStatus = 'Connected';
           });
-        } else if ((state == RTCIceConnectionState.RTCIceConnectionStateFailed ||
-            state == RTCIceConnectionState.RTCIceConnectionStateDisconnected) &&
+        } else if ((state ==
+                    RTCIceConnectionState.RTCIceConnectionStateFailed ||
+                state ==
+                    RTCIceConnectionState.RTCIceConnectionStateDisconnected) &&
             !_isCallEnded) {
           _handleConnectionFailure();
         }
@@ -407,12 +494,11 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
 
       // Listen for ICE candidates
       _listenForIceCandidates();
-
     } catch (e) {
       throw Exception('Error initializing peer connection: $e');
     }
   }
-  
+
   void _handleConnectionFailure() {
     if (mounted && !_isCallEnded) {
       setState(() {
@@ -429,14 +515,15 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _createOffer() async {
-    if (!mounted || _isCallEnded) return;
-    
+    if (!mounted || _isCallEnded || _peerConnection == null) return;
+
     try {
       final offer = await _peerConnection!.createOffer();
-      if (_isCallEnded) return; // Check if call ended during async operation
-      
+      if (_isCallEnded || !mounted)
+        return; // Check if call ended during async operation
+
       await _peerConnection!.setLocalDescription(offer);
-      if (_isCallEnded) return;
+      if (_isCallEnded || !mounted) return;
 
       await _firestore.collection('calls').doc(widget.conversationId).update({
         'type': 'offer',
@@ -450,11 +537,11 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
           .snapshots()
           .listen(
             (snapshot) async {
-              if (!mounted || _isCallEnded) {
+              if (!mounted || _isCallEnded || _peerConnection == null) {
                 _answerSubscription?.cancel();
                 return;
               }
-              
+
               if (!snapshot.exists) return;
 
               final data = snapshot.data();
@@ -462,9 +549,10 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
 
               if (data['type'] == 'answer' && data['sdp'] != null) {
                 try {
-                  if (_isCallEnded) return;
-                  
-                  final remoteDesc = await _peerConnection?.getRemoteDescription();
+                  if (_isCallEnded || !mounted) return;
+
+                  final remoteDesc =
+                      await _peerConnection?.getRemoteDescription();
                   if (remoteDesc == null && mounted && !_isCallEnded) {
                     final answer = RTCSessionDescription(
                       data['sdp'],
@@ -487,10 +575,11 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _listenForOffer() async {
-    if (!mounted || _isCallEnded) return;
-    
+    if (!mounted || _isCallEnded || _peerConnection == null) return;
+
     try {
-      final doc = await _firestore.collection('calls').doc(widget.conversationId).get();
+      final doc =
+          await _firestore.collection('calls').doc(widget.conversationId).get();
       if (!mounted || _isCallEnded) return;
 
       if (!doc.exists || doc.data() == null) {
@@ -512,8 +601,8 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _acceptCall() async {
-    if (!mounted || _isCallEnded) return;
-    
+    if (!mounted || _isCallEnded || _peerConnection == null) return;
+
     try {
       setState(() {
         _callStatus = 'Connecting...';
@@ -522,7 +611,7 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
       // Create answer
       final answer = await _peerConnection!.createAnswer();
       if (!mounted || _isCallEnded) return;
-      
+
       await _peerConnection!.setLocalDescription(answer);
       if (!mounted || _isCallEnded) return;
 
@@ -564,11 +653,11 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
         .snapshots()
         .listen(
           (snapshot) {
-            if (!mounted || _isCallEnded) {
+            if (!mounted || _isCallEnded || _peerConnection == null) {
               _iceCandidatesSubscription?.cancel();
               return;
             }
-            
+
             for (var change in snapshot.docChanges) {
               if (change.type == DocumentChangeType.added) {
                 final data = change.doc.data();
@@ -598,7 +687,7 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
 
     // Set this flag first to prevent multiple calls to endCall
     _isCallEnded = true;
-    
+
     if (mounted) {
       setState(() {
         _callStatus = 'Call ended';
@@ -637,11 +726,12 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
     Future.delayed(const Duration(seconds: 2), () async {
       try {
         // Delete ICE candidates
-        final candidatesSnapshot = await _firestore
-            .collection('calls')
-            .doc(widget.conversationId)
-            .collection('iceCandidates')
-            .get();
+        final candidatesSnapshot =
+            await _firestore
+                .collection('calls')
+                .doc(widget.conversationId)
+                .collection('iceCandidates')
+                .get();
 
         for (var doc in candidatesSnapshot.docs) {
           await doc.reference.delete();
@@ -672,7 +762,7 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
   }
 
   void _toggleCamera() {
-    if (_localStream != null && widget.isVideoCall && mounted) {
+    if (_localStream != null && _shouldShowVideoUI && mounted) {
       final videoTrack = _localStream!.getVideoTracks().firstOrNull;
       if (videoTrack != null) {
         setState(() {
@@ -684,7 +774,7 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
   }
 
   void _switchCamera() async {
-    if (_localStream != null && widget.isVideoCall) {
+    if (_localStream != null && _shouldShowVideoUI) {
       final videoTrack = _localStream!.getVideoTracks().firstOrNull;
       if (videoTrack != null) {
         await Helper.switchCamera(videoTrack);
@@ -710,9 +800,9 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
       });
 
       // Show error to user
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
 
       // Close call screen after delay
       Future.delayed(const Duration(seconds: 2), () {
@@ -757,68 +847,70 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
         body: SafeArea(
           child: Stack(
             children: [
-              // Video Streams
-              if (widget.isVideoCall) ...[
-                // Remote video (full screen)
-                if (_isConnected && _remoteRenderer.srcObject != null)
-                  Positioned.fill(
-                    child: RTCVideoView(
-                      _remoteRenderer,
-                      objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
-                    ),
-                  ),
-                // Local video (picture-in-picture)
-                if (_localRenderer.srcObject != null)
-                  Positioned(
-                    right: 20,
-                    top: 20,
-                    width: 100,
-                    height: 150,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Colors.white, width: 2),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: RTCVideoView(
-                          _localRenderer,
-                          mirror: true,
-                          objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
-                        ),
-                      ),
-                    ),
-                  ),
-              ] else ...[
-                // Audio call UI
-                Positioned.fill(
-                  child: Container(
-                    color: Colors.blueGrey.shade900,
-                    child: Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          CircleAvatar(
-                            radius: 70,
-                            backgroundColor: Colors.blueGrey.shade700,
-                            child: Text(
-                              _peerName?.isNotEmpty == true
-                                  ? _peerName![0].toUpperCase()
-                                  : '?',
-                              style: const TextStyle(
-                                fontSize: 50,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 20),
-                          if (_isConnected) _buildWaveform(),
-                        ],
-                      ),
-                    ),
-                  ),
+// Video Streams - use _shouldShowVideoUI instead of widget.isVideoCall
+if (_shouldShowVideoUI) ...[
+  // Remote video (full screen)
+  if (_isConnected && _remoteRenderer.srcObject != null)
+    Positioned.fill(
+      child: RTCVideoView(
+        _remoteRenderer,
+        objectFit:
+            RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+      ),
+    ),
+  // Local video (picture-in-picture)
+  if (_localRenderer.srcObject != null)
+    Positioned(
+      right: 20,
+      top: 20,
+      width: 100,
+      height: 150,
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border.all(color: Colors.white, width: 2),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: RTCVideoView(
+            _localRenderer,
+            mirror: true,
+            objectFit:
+                RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+          ),
+        ),
+      ),
+    ),
+] else ...[
+  // Audio call UI
+  Positioned.fill(
+    child: Container(
+      color: Colors.blueGrey.shade900,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircleAvatar(
+              radius: 70,
+              backgroundColor: Colors.blueGrey.shade700,
+              child: Text(
+                _peerName?.isNotEmpty == true
+                    ? _peerName![0].toUpperCase()
+                    : '?',
+                style: const TextStyle(
+                  fontSize: 50,
+                  color: Colors.white,
                 ),
-              ],
+              ),
+            ),
+            const SizedBox(height: 20),
+            //if (_isConnected) _buildWaveform(),
+          ],
+        ),
+      ),
+    ),
+  ),
+],
 
               // Call information overlay
               Positioned(
@@ -865,9 +957,10 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
                           // Mute button
                           CircleAvatar(
                             radius: 25,
-                            backgroundColor: _isMicMuted
-                                ? Colors.red.withOpacity(0.8)
-                                : Colors.white.withOpacity(0.3),
+                            backgroundColor:
+                                _isMicMuted
+                                    ? Colors.red.withOpacity(0.8)
+                                    : Colors.white.withOpacity(0.3),
                             child: IconButton(
                               icon: Icon(
                                 _isMicMuted ? Icons.mic_off : Icons.mic,
@@ -878,15 +971,18 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
                           ),
 
                           // Video toggle (only for video calls)
-                          if (widget.isVideoCall)
+                          if (_shouldShowVideoUI)
                             CircleAvatar(
                               radius: 25,
-                              backgroundColor: _isCameraOff
-                                  ? Colors.red.withOpacity(0.8)
-                                  : Colors.white.withOpacity(0.3),
+                              backgroundColor:
+                                  _isCameraOff
+                                      ? Colors.red.withOpacity(0.8)
+                                      : Colors.white.withOpacity(0.3),
                               child: IconButton(
                                 icon: Icon(
-                                  _isCameraOff ? Icons.videocam_off : Icons.videocam,
+                                  _isCameraOff
+                                      ? Icons.videocam_off
+                                      : Icons.videocam,
                                   color: Colors.white,
                                 ),
                                 onPressed: _toggleCamera,
@@ -909,12 +1005,15 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
                           // Speaker toggle
                           CircleAvatar(
                             radius: 25,
-                            backgroundColor: _isSpeakerOn
-                                ? Colors.blue.withOpacity(0.8)
-                                : Colors.white.withOpacity(0.3),
+                            backgroundColor:
+                                _isSpeakerOn
+                                    ? Colors.blue.withOpacity(0.8)
+                                    : Colors.white.withOpacity(0.3),
                             child: IconButton(
                               icon: Icon(
-                                _isSpeakerOn ? Icons.volume_up : Icons.volume_down,
+                                _isSpeakerOn
+                                    ? Icons.volume_up
+                                    : Icons.volume_down,
                                 color: Colors.white,
                               ),
                               onPressed: _toggleSpeaker,
@@ -922,7 +1021,7 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
                           ),
 
                           // Camera switch (only for video calls)
-                          if (widget.isVideoCall)
+                          if (_shouldShowVideoUI)
                             CircleAvatar(
                               radius: 25,
                               backgroundColor: Colors.white.withOpacity(0.3),
@@ -943,30 +1042,6 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildWaveform() {
-    return SizedBox(
-      height: 50,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: List.generate(7, (index) => _buildWaveBar(index)),
-      ),
-    );
-  }
-
-  Widget _buildWaveBar(int index) {
-    // Simulate audio visualization with animated bars
-    return AnimatedContainer(
-      duration: Duration(milliseconds: 300 + (index * 100)),
-      width: 6,
-      height: _isMicMuted ? 10 : 20.0 + (index * 5) % 30,
-      margin: const EdgeInsets.symmetric(horizontal: 3),
-      decoration: BoxDecoration(
-        color: Colors.blue.shade400,
-        borderRadius: BorderRadius.circular(3),
       ),
     );
   }
