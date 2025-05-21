@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mime_type/mime_type.dart';
-
 import 'message_service.dart';
 
 
@@ -14,12 +13,20 @@ class MessageInput extends StatefulWidget {
   const MessageInput({
     super.key,
     required this.conversationId,
-    required this.participants,
+    required this.participants, required Null Function() onSend,
   });
 
   @override
   State<MessageInput> createState() => _MessageInputState();
 }
+class ReplyData {
+  final String messageId;
+  final String content;
+  final String senderId;
+
+  ReplyData({required this.messageId, required this.content, required this.senderId});
+}
+
 
 class _MessageInputState extends State<MessageInput> {
   final _controller = TextEditingController();
@@ -69,6 +76,8 @@ class _MessageInputState extends State<MessageInput> {
       setState(() => _isSending = false);
     }
   }
+
+
 
   Future<void> _pickFile() async {
     try {

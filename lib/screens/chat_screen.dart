@@ -1,7 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-
+import 'package:intl/intl.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/message_input.dart';
 import 'call_screen.dart';
@@ -21,6 +21,7 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
+  final ValueNotifier<ReplyData?> replyNotifier = ValueNotifier(null);
   final ScrollController _scrollController = ScrollController();
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -58,8 +59,39 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  bool _isLoadingMore = false;
+  DocumentSnapshot? _lastDocument;
+
+  Future<void> _loadMoreMessages() async {
+    if (_isLoadingMore) return;
+
+    setState(() => _isLoadingMore = true);
+
+    try {
+      final query = _firestore
+          .collection('conversations')
+          .doc(widget.conversationId)
+          .collection('messages')
+          .orderBy('timestamp', descending: true)
+          .startAfterDocument(_lastDocument!)
+          .limit(20); // Adjust limit as needed
+
+      final snapshot = await query.get();
+
+      if (snapshot.docs.isNotEmpty) {
+        _lastDocument = snapshot.docs.last;
+        // You'll need to merge these new messages with your existing ones
+        // This depends on how you're managing your message stream
+      }
+    } catch (e) {
+      debugPrint('Error loading more messages: $e');
+    } finally {
+      setState(() => _isLoadingMore = false);
+    }
+  }
+
   Future<void> _markMessagesAsReadOnce() async {
-    if (_messagesMarkedAsRead) return; // prevent re-trigger
+    if (_messagesMarkedAsRead) return;
     _messagesMarkedAsRead = true;
 
     final unreadMessages =
@@ -100,12 +132,13 @@ class _ChatScreenState extends State<ChatScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (ctx) => CallScreen(
-          conversationId: widget.conversationId,
-          callerId: _currentUserId,
-          receiverId: _otherUserId,
-          isVideoCall: false,
-        ),
+        builder:
+            (ctx) => CallScreen(
+              conversationId: widget.conversationId,
+              callerId: _currentUserId,
+              receiverId: _otherUserId,
+              isVideoCall: false,
+            ),
       ),
     );
   }
@@ -114,24 +147,26 @@ class _ChatScreenState extends State<ChatScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (ctx) => CallScreen(
-          conversationId: widget.conversationId,
-          callerId: _currentUserId,
-          receiverId: _otherUserId,
-          isVideoCall: true,
-        ),
+        builder:
+            (ctx) => CallScreen(
+              conversationId: widget.conversationId,
+              callerId: _currentUserId,
+              receiverId: _otherUserId,
+              isVideoCall: true,
+            ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final messageStream = _firestore
-        .collection('conversations')
-        .doc(widget.conversationId)
-        .collection('messages')
-        .orderBy('timestamp', descending: true)
-        .snapshots();
+    final messageStream =
+        _firestore
+            .collection('conversations')
+            .doc(widget.conversationId)
+            .collection('messages')
+            .orderBy('timestamp', descending: true)
+            .snapshots();
 
     return Scaffold(
       appBar: AppBar(
@@ -174,32 +209,120 @@ class _ChatScreenState extends State<ChatScreen> {
                   }
                 });
 
-                return ListView.builder(
-                  controller: _scrollController,
-                  reverse: true,
-                  itemCount: messages.length,
-                  itemBuilder: (ctx, index) {
-                    final message = messages[index];
-                    return MessageBubble(
-                      key: ValueKey(message.id),
-                      messageId: message.id,
-                      senderId: message['senderId'],
-                      content: message['content'],
-                      messageType: message['messageType'],
-                      timestamp: message['timestamp'] as Timestamp,
-                      isMe: message['senderId'] == _currentUserId,
-                      conversationId: widget.conversationId,
-                      fileUrl: message['fileUrl'],
-                      fileType: message['fileType'],
-                    );
+                return NotificationListener<ScrollNotification>(
+                  onNotification: (scrollNotification) {
+                    if (scrollNotification is ScrollEndNotification &&
+                        _scrollController.position.extentBefore == 0 &&
+                        !_isLoadingMore) {
+                      _loadMoreMessages();
+                      return true;
+                    }
+                    return false;
                   },
+                  child: ListView.builder(
+                    controller: _scrollController,
+                    reverse: true,
+                    itemCount: messages.length + (_isLoadingMore ? 1 : 0),
+                    itemBuilder: (ctx, index) {
+                      // Show loading indicator at the top when loading more messages
+                      if (_isLoadingMore && index == messages.length) {
+                        return const Center(
+                          child: Padding(
+                            padding: EdgeInsets.all(8.0),
+                            child: CircularProgressIndicator(),
+                          ),
+                        );
+                      }
+
+                      // Adjust index if we're loading more
+                      final messageIndex = _isLoadingMore ? index : index;
+                      if (messageIndex >= messages.length) return Container();
+
+                      final message = messages[messageIndex];
+                      final data = message.data() as Map<String, dynamic>;
+                      final messageType = data['messageType'] ?? 'text';
+
+                      if (messageType == 'call') {
+                        final isMe = data['senderId'] == _currentUserId;
+                        final callType = data['callType'] ?? 'voice';
+                        final status = data['status'] ?? 'missed';
+                        final timestamp = data['timestamp'];
+                        final time =
+                            (timestamp is Timestamp)
+                                ? timestamp.toDate()
+                                : DateTime.now();
+
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: Center(
+                            child: Card(
+                              color:
+                                  status == 'accepted'
+                                      ? Colors.green[100]
+                                      : Colors.red[100],
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 6,
+                                  horizontal: 12,
+                                ),
+                                child: Text(
+                                  '${isMe ? "You" : _otherUserName} '
+                                  '${status == "accepted" ? "answered" : status} '
+                                  'a $callType call\n${DateFormat('MMM d, h:mm a').format(time)}',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color:
+                                        status == 'accepted'
+                                            ? Colors.green[800]
+                                            : Colors.red[800],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      } else {
+                        // Handle text, image, or file messages
+                        final content =
+                            data.containsKey('content') ? data['content'] : '';
+                        final senderId = data['senderId'] ?? '';
+                        final timestamp = data['timestamp'] ?? Timestamp.now();
+                        final fileUrl =
+                            data.containsKey('fileUrl')
+                                ? data['fileUrl']
+                                : null;
+                        final fileType =
+                            data.containsKey('fileType')
+                                ? data['fileType']
+                                : null;
+
+                        return MessageBubble(
+                          key: ValueKey(message.id),
+                          messageId: message.id,
+                          senderId: senderId,
+                          content: content,
+                          messageType: messageType,
+                          timestamp: timestamp as Timestamp,
+                          isMe: senderId == _currentUserId,
+                          conversationId: widget.conversationId,
+                          fileUrl: fileUrl,
+                          fileType: fileType,
+                        );
+                      }
+                    },
+                  ),
                 );
               },
             ),
           ),
+          // Your message input widget here
           MessageInput(
             conversationId: widget.conversationId,
             participants: widget.participants,
+            onSend: () {
+              _scrollToBottom();
+            },
           ),
         ],
       ),
@@ -209,71 +332,83 @@ class _ChatScreenState extends State<ChatScreen> {
   void _showChatInfo(BuildContext context) {
     showModalBottomSheet(
       context: context,
-      builder: (ctx) => FutureBuilder<DocumentSnapshot>(
-        future: _firestore.collection('users').doc(_otherUserId).get(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
+      builder:
+          (ctx) => FutureBuilder<DocumentSnapshot>(
+            future: _firestore.collection('users').doc(_otherUserId).get(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
 
-          final user = snapshot.data?.data() as Map<String, dynamic>? ?? {};
+              final user = snapshot.data?.data() as Map<String, dynamic>? ?? {};
 
-          return Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                CircleAvatar(
-                  radius: 40,
-                  backgroundImage: user['photoURL'] != null
-                      ? NetworkImage(user['photoURL'])
-                      : null,
-                  child: user['photoURL'] == null
-                      ? const Icon(Icons.person, size: 40)
-                      : null,
+              return Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircleAvatar(
+                      radius: 40,
+                      backgroundImage:
+                          user['photoURL'] != null
+                              ? NetworkImage(user['photoURL'])
+                              : null,
+                      child:
+                          user['photoURL'] == null
+                              ? const Icon(Icons.person, size: 40)
+                              : null,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      user['displayName'] ?? 'Unknown',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      user['email'] ?? '',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 16),
+                    const Divider(),
+                    ListTile(
+                      leading: const Icon(Icons.delete),
+                      title: const Text('Delete conversation'),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _confirmDeleteConversation(context);
+                      },
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 16),
-                Text(
-                  user['displayName'] ?? 'Unknown',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  user['email'] ?? '',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-                const SizedBox(height: 16),
-                const Divider(),
-                ListTile(
-                  leading: const Icon(Icons.delete),
-                  title: const Text('Delete conversation'),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _confirmDeleteConversation(context);
-                  },
-                ),
-              ],
-            ),
-          );
-        },
-      ),
+              );
+            },
+          ),
     );
   }
 
   Future<void> _confirmDeleteConversation(BuildContext context) async {
     final confirm = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Delete Conversation?'),
-        content: const Text('All messages and calls will be permanently deleted.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+      builder:
+          (ctx) => AlertDialog(
+            title: const Text('Delete Conversation?'),
+            content: const Text(
+              'All messages and calls will be permanently deleted.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text(
+                  'Delete',
+                  style: TextStyle(color: Colors.red),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
     );
 
     if (confirm != true) return;
@@ -292,7 +427,9 @@ class _ChatScreenState extends State<ChatScreen> {
       }
 
       // Delete call data (calls + iceCandidates)
-      final callDocRef = _firestore.collection('calls').doc(widget.conversationId);
+      final callDocRef = _firestore
+          .collection('calls')
+          .doc(widget.conversationId);
       final callDoc = await callDocRef.get();
       if (callDoc.exists) {
         // Delete iceCandidates
@@ -305,7 +442,9 @@ class _ChatScreenState extends State<ChatScreen> {
       }
 
       // Delete conversation document
-      final conversationRef = _firestore.collection('conversations').doc(widget.conversationId);
+      final conversationRef = _firestore
+          .collection('conversations')
+          .doc(widget.conversationId);
       batch.delete(conversationRef);
 
       await batch.commit();

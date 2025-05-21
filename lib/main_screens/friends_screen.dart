@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -14,7 +16,7 @@ class ContactsScreen extends StatefulWidget {
 class _ContactsScreenState extends State<ContactsScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  
+  StreamSubscription? _friendsSubscription;
 
   List<Map<String, dynamic>> _friendsList = [];
   bool _isLoading = false;
@@ -25,27 +27,50 @@ class _ContactsScreenState extends State<ContactsScreen> {
     _loadFriends();
   }
 
-  Future<void> _loadFriends() async {
-    setState(() => _isLoading = true);
-    final currentUser = _auth.currentUser;
-    if (currentUser == null) return;
 
-    try {
-      final friendsSnapshot =
-          await _firestore
-              .collection('users')
-              .doc(currentUser.uid)
-              .collection('friends')
-              .get();
 
+Future<void> _loadFriends() async {
+  setState(() => _isLoading = true);
+  final currentUser = _auth.currentUser;
+  if (currentUser == null) return;
+
+  try {
+    // Cancel any existing subscription
+    _friendsSubscription?.cancel();
+    
+    // Create new subscription to the friends stream
+    _friendsSubscription = _firestore
+        .collection('users')
+        .doc(currentUser.uid)
+        .collection('friends')
+        .snapshots()
+        .listen((friendsSnapshot) {
       final friends = friendsSnapshot.docs.map((doc) => doc.data()).toList();
-      setState(() => _friendsList = friends);
-    } catch (e) {
+      if (mounted) {
+        setState(() => _friendsList = friends);
+      }
+    }, onError: (e) {
+      if (mounted) {
+        _showSnack('Failed to load friends: ${e.toString()}');
+      }
+    });
+
+  } catch (e) {
+    if (mounted) {
       _showSnack('Failed to load friends: ${e.toString()}');
-    } finally {
+    }
+  } finally {
+    if (mounted) {
       setState(() => _isLoading = false);
     }
   }
+}
+
+@override
+void dispose() {
+  _friendsSubscription?.cancel();
+  super.dispose();
+}
 
   void _showSnack(String message) {
     ScaffoldMessenger.of(
@@ -261,8 +286,6 @@ class _ContactsScreenState extends State<ContactsScreen> {
 
   Future<void> _showFriendRequests() async {
     final currentUser = _auth.currentUser;
-    final userId = currentUser?.uid;
-    final displayName = currentUser?.displayName;
     if (currentUser == null) return;
 
     showModalBottomSheet(

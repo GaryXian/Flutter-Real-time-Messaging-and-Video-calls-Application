@@ -54,6 +54,15 @@ dependencies:
 
 
   mime: any
+  permission_handler: ^12.0.0+1
+  flutter_downloader: ^1.12.0
+  path_provider: ^2.1.5
+  http: ^1.4.0
+  dio: ^5.8.0+1
+  shared_preferences: ^2.5.3
+  flutter_image_compress: ^2.4.0
+  firebase_messaging: ^15.2.5
+  audioplayers: ^6.4.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

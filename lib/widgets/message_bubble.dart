@@ -1,11 +1,19 @@
 import 'dart:async';
-
+import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:dio/dio.dart';
+
+import 'message_input.dart';
 
 class MessageBubble extends StatelessWidget {
+  final ValueNotifier<MessageBubble?> replyNotifier = ValueNotifier(null);
   final String messageId;
   final String senderId;
   final String content;
@@ -22,6 +30,7 @@ class MessageBubble extends StatelessWidget {
   final _conversationId = 'your_conversation_id'; // dynamically assigned
   final bool isTyping;
   final bool isDeleted; // New field to track deleted status
+  final Map<String, String>? reaction; // New field for reactions
 
   MessageBubble({
     super.key,
@@ -35,60 +44,66 @@ class MessageBubble extends StatelessWidget {
     this.fileUrl,
     this.fileType,
     this.isTyping = false,
-    this.isDeleted = false, // Default to not deleted
+    this.isDeleted = false,
+    this.reaction,
   });
 
   Future<void> _deleteMessage(BuildContext context) async {
-  final confirm = await showDialog<bool>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      title: const Text('Delete Message?'),
-      content: const Text('This action cannot be undone.'),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(ctx).pop(false),
-          child: const Text('Cancel'),
-        ),
-        TextButton(
-          onPressed: () => Navigator.of(ctx).pop(true),
-          child: const Text('Delete', style: TextStyle(color: Colors.red)),
-        ),
-      ],
-    ),
-  );
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder:
+          (ctx) => AlertDialog(
+            title: const Text('Delete Message?'),
+            content: const Text('This action cannot be undone.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: const Text(
+                  'Delete',
+                  style: TextStyle(color: Colors.red),
+                ),
+              ),
+            ],
+          ),
+    );
 
-  if (confirm == true) {
-    try {
-      final messageRef = FirebaseFirestore.instance
-          .collection('conversations')
-          .doc(conversationId)
-          .collection('messages')
-          .doc(messageId);
+    if (confirm == true) {
+      try {
+        final messageRef = FirebaseFirestore.instance
+            .collection('conversations')
+            .doc(conversationId)
+            .collection('messages')
+            .doc(messageId);
 
-      // Get the message before deleting it
-      final messageSnapshot = await messageRef.get();
+        // Get the message before deleting it
+        final messageSnapshot = await messageRef.get();
 
-      await messageRef.delete(); // 🔥 Delete the message document
+        await messageRef.delete();
 
-      // Update conversation lastMessage if needed
-      final conversation = await FirebaseFirestore.instance
-          .collection('conversations')
-          .doc(conversationId)
-          .get();
+        // Update conversation lastMessage if needed
+        final conversation =
+            await FirebaseFirestore.instance
+                .collection('conversations')
+                .doc(conversationId)
+                .get();
 
-      if (conversation.exists &&
-          conversation.data()?['lastMessageId'] == messageId) {
-        await _updateLastMessageAfterDeletion(conversationId);
-      }
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to delete: ${e.toString()}')),
-        );
+        if (conversation.exists &&
+            conversation.data()?['lastMessageId'] == messageId) {
+          await _updateLastMessageAfterDeletion(conversationId);
+        }
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to delete: ${e.toString()}')),
+          );
+        }
       }
     }
   }
-}
 
   Future<void> _updateLastMessageAfterDeletion(String conversationId) async {
     final messages =
@@ -129,7 +144,65 @@ class MessageBubble extends StatelessWidget {
     }
   }
 
-  Widget _buildMessageContent() {
+  Future<void> _downloadFile(String url) async {
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else {
+      debugPrint('Could not launch $url');
+    }
+  }
+
+  Future<void> _downloadImage(BuildContext context, String imageUrl) async {
+    try {
+      // Request permission (needed for Android)
+      if (Platform.isAndroid) {
+        final status = await Permission.storage.request();
+        if (!status.isGranted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Storage permission denied')));
+          return;
+        }
+      }
+
+      final tempDir = await getTemporaryDirectory();
+      final filename = Uri.parse(imageUrl).pathSegments.last;
+      final savePath = '${tempDir.path}/$filename';
+
+      final dio = Dio();
+
+      // Show download start
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Downloading $filename...')));
+
+      await dio.download(
+        imageUrl,
+        savePath,
+        onReceiveProgress: (received, total) {
+          if (total != -1) {
+            debugPrint(
+              'Download: ${(received / total * 100).toStringAsFixed(0)}%',
+            );
+          }
+        },
+      );
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Downloaded to $savePath')));
+
+      // Optionally: open the file or share it
+    } catch (e) {
+      debugPrint('Download error: $e');
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Download failed')));
+    }
+  }
+
+  Widget _buildMessageContent(BuildContext context) {
     // If the message is deleted, show deleted message indicator
     if (isDeleted) {
       return Row(
@@ -154,7 +227,7 @@ class MessageBubble extends StatelessWidget {
       case 'image':
         return fileUrl != null
             ? GestureDetector(
-              onTap: () => _showFullScreenImage(fileUrl!),
+              onTap: () => _showFullScreenImage(context, fileUrl!),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(12),
                 child: Image.network(
@@ -191,28 +264,36 @@ class MessageBubble extends StatelessWidget {
             )
             : const Text('[Image not available]');
       case 'file':
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Icon(Icons.insert_drive_file, size: 40),
-            const SizedBox(height: 8),
-            Text(
-              content.isNotEmpty ? content : 'Sent a file',
-              style: TextStyle(
-                fontSize: 16,
-                color: isMe ? Colors.white : Colors.black87,
-              ),
-            ),
-            if (fileUrl != null)
+        return GestureDetector(
+          onTap: () {
+            if (fileUrl != null) {
+              _downloadFile(fileUrl!);
+            }
+          },
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(Icons.insert_drive_file, size: 40),
+              const SizedBox(height: 8),
               Text(
-                'Tap to download',
+                content.isNotEmpty ? content : 'Sent a file',
                 style: TextStyle(
-                  fontSize: 12,
-                  color: isMe ? Colors.white70 : Colors.black54,
+                  fontSize: 16,
+                  color: isMe ? Colors.white : Colors.black87,
                 ),
               ),
-          ],
+              if (fileUrl != null)
+                Text(
+                  'Tap to download',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: isMe ? Colors.white70 : Colors.black54,
+                  ),
+                ),
+            ],
+          ),
         );
+
       default:
         return Text(
           content,
@@ -224,31 +305,18 @@ class MessageBubble extends StatelessWidget {
     }
   }
 
-  void _showEmojiReactionMenu(BuildContext context) {
-    final emojis = ['👍', '❤️', '😂', '😮', '😢', '😡'];
-    showModalBottomSheet(
-      context: context,
-      builder:
-          (ctx) => Wrap(
-            children:
-                emojis.map((emoji) {
-                  return ListTile(
-                    title: Text(emoji, style: TextStyle(fontSize: 24)),
-                    onTap: () async {
-                      final uid = FirebaseAuth.instance.currentUser!.uid;
-                      final msgRef = FirebaseFirestore.instance
-                          .collection('conversations')
-                          .doc(conversationId)
-                          .collection('messages')
-                          .doc(messageId);
-                      await msgRef.set({
-                        'reactions.$uid': emoji,
-                      }, SetOptions(merge: true));
-                      Navigator.of(ctx).pop();
-                    },
-                  );
-                }).toList(),
-          ),
+  void _replyMessage(BuildContext context) {
+    final replyData = ReplyData(
+      messageId: messageId,
+      content: content,
+      senderId: senderId,
+    );
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Functionality to reply to message is not implemented yet.',
+        ),
+      ),
     );
   }
 
@@ -325,28 +393,252 @@ class MessageBubble extends StatelessWidget {
     );
   }
 
-  void _showFullScreenImage(String imageUrl) {
-    // Implement full screen image viewer
-    // Could use a package like photo_view
+  void _showFullScreenImage(BuildContext context, String imageUrl) {
+    showDialog(
+      context: context,
+      builder:
+          (ctx) => Dialog(
+            backgroundColor: Colors.black,
+            insetPadding: EdgeInsets.zero,
+            child: GestureDetector(
+              onTap: () => Navigator.of(ctx).pop(),
+              child: InteractiveViewer(child: Image.network(imageUrl)),
+            ),
+          ),
+    );
   }
 
-Color _getBubbleColor() {
-  if (isDeleted) {
-    return isMe ? Colors.blueGrey.withOpacity(0.5) : Colors.grey[200]!;
+  void _copyMessage(BuildContext context) {
+    Clipboard.setData(ClipboardData(text: content));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Message copied to clipboard')),
+    );
   }
 
-  if (messageType == 'image' && isMe) {
-    return Colors.transparent; // No background for user's image
+  Color _getBubbleColor() {
+    if (isDeleted) {
+      return isMe ? Colors.blueGrey.withOpacity(0.5) : Colors.grey[200]!;
+    }
+
+    if (messageType == 'image' || messageType == 'video' && isMe) {
+      return Colors.transparent; // No background for user's image
+    }
+
+    if (isMe) {
+      return Colors.blueAccent;
+    } else {
+      return messageType == 'text' ? Colors.grey[300]! : Colors.grey[200]!;
+    }
   }
 
-  if (isMe) {
-    return Colors.blueAccent;
-  } else {
-    return messageType == 'text' ? Colors.grey[300]! : Colors.grey[200]!;
-  }
+void _showOverlayWithMenus(BuildContext context, bool canDelete) {
+  final RenderBox renderBox = context.findRenderObject() as RenderBox;
+  final messagePosition = renderBox.localToGlobal(Offset.zero);
+  final messageSize = renderBox.size;
+  final screenSize = MediaQuery.of(context).size;
+
+  final overlay = Overlay.of(context);
+  late OverlayEntry overlayEntry;
+
+  // Calculate safe menu position (bottom right by default)
+  const double menuWidth = 120;
+  const double menuHeightEstimate = 200; // approximate menu height
+  double dx = messagePosition.dx + messageSize.width - menuWidth;
+  double dy = messagePosition.dy + messageSize.height;
+
+  // Clamp to screen bounds
+  dx = dx.clamp(8.0, screenSize.width - menuWidth - 8.0);
+  dy = dy.clamp(8.0, screenSize.height - menuHeightEstimate - 8.0);
+
+  overlayEntry = OverlayEntry(
+    builder: (context) => Stack(
+      children: [
+        // Dismiss on tap outside
+        Positioned.fill(
+          child: GestureDetector(
+            onTap: () => overlayEntry.remove(),
+            behavior: HitTestBehavior.translucent,
+            child: Container(color: Colors.transparent),
+          ),
+        ),
+
+        // Options menu
+        Positioned(
+          left: dx,
+          top: dy,
+          child: _buildOptionsMenu(
+            context,
+            Offset(dx, dy),
+            _buildMenuItems(context, canDelete, overlayEntry),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  overlay.insert(overlayEntry);
 }
 
-  @override
+
+List<Widget> _buildMenuItems(
+  BuildContext context,
+  bool canDelete,
+  OverlayEntry overlayEntry,
+) {
+  final List<Widget> items = [];
+
+  if (messageType == 'text') {
+    items.add(_buildOptionItem(
+      'Copy',
+      Icons.copy,
+      () {
+        overlayEntry.remove();
+        Clipboard.setData(ClipboardData(text: content));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Message copied')),
+        );
+      },
+    ));
+    items.add(const Divider(height: 1));
+  }
+
+  items.add(_buildOptionItem(
+    'Reply',
+    Icons.reply,
+    () {
+      overlayEntry.remove();
+      _replyMessage(context);
+    },
+  ));
+
+  if (canDelete) {
+    items.add(const Divider(height: 1));
+    items.add(_buildOptionItem(
+      'Edit',
+      Icons.edit_outlined,
+      () {
+        overlayEntry.remove();
+        _editMessage(context);
+      },
+    ));
+    items.add(const Divider(height: 1));
+    items.add(_buildOptionItem(
+      'Delete',
+      Icons.delete_outline,
+      () {
+        overlayEntry.remove();
+        _deleteMessage(context);
+      },
+      textColor: Colors.red,
+      iconColor: Colors.red,
+    ));
+  }
+
+  return items;
+}
+
+Widget _buildEmojiBar(BuildContext context, Offset position, OverlayEntry overlayEntry) {
+  return Positioned(
+    left: position.dx,
+    top: position.dy,
+    child: Material(
+      elevation: 8,
+      borderRadius: BorderRadius.circular(24),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        decoration: BoxDecoration(
+          color: Theme.of(context).cardColor,
+          borderRadius: BorderRadius.circular(24),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildEmojiButton('❤️', overlayEntry),
+            _buildEmojiButton('👍', overlayEntry),
+            _buildEmojiButton('😂', overlayEntry),
+            _buildEmojiButton('😮', overlayEntry),
+            _buildEmojiButton('😢', overlayEntry),
+            _buildEmojiButton('🙏', overlayEntry),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+Widget _buildOptionsMenu(BuildContext context, Offset position, List<Widget> items) {
+  return Positioned(
+    left: position.dx,
+    top: position.dy,
+    child: Material(
+      elevation: 8,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        width: 120,
+        decoration: BoxDecoration(
+          color: Theme.of(context).cardColor,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: items,
+        ),
+      ),
+    ),
+  );
+}
+
+  Widget _buildOptionItem(
+    String label,
+    IconData icon,
+    VoidCallback onTap, {
+    Color iconColor = Colors.black87,
+    Color textColor = Colors.black87,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+        child: Row(
+          children: [
+            Icon(icon, size: 18, color: iconColor),
+            const SizedBox(width: 8),
+            Text(label, style: TextStyle(color: textColor)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmojiButton(String emoji, OverlayEntry overlayEntry) {
+    return InkWell(
+      onTap: () {
+        // Add reaction
+        _addReaction(emoji);
+        overlayEntry.remove();
+      },
+      borderRadius: BorderRadius.circular(20),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Text(emoji, style: const TextStyle(fontSize: 20)),
+      ),
+    );
+  }
+
+  void _addReaction(String emoji) {
+    final currentUserId = FirebaseAuth.instance.currentUser!.uid;
+
+    // Create a new map if reactions are null
+    final updatedReactions = reaction ?? {};
+    updatedReactions[currentUserId] = emoji;
+
+    // Update the message in Firestore
+    FirebaseFirestore.instance.collection('messages').doc(messageId).update({
+      'reaction': updatedReactions,
+    });
+  }
+
+@override
 Widget build(BuildContext context) {
   final currentUserId = FirebaseAuth.instance.currentUser?.uid;
   final canDelete = senderId == currentUserId && !isDeleted;
@@ -354,113 +646,171 @@ Widget build(BuildContext context) {
 
   return Padding(
     padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-    child: Align(
-      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: AbsorbPointer( // 🔒 Prevent all interaction if deleted
-        absorbing: isDeleted,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.75,
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+      children: [
+        if (!isMe) // Show profile picture for received messages
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: _buildUserAvatar(senderId),
           ),
-          child: GestureDetector(
-            onLongPress: () {
-              if (canDelete) {
-                showModalBottomSheet(
-                  context: context,
-                  builder: (ctx) => SafeArea(
+        Flexible(
+          child: Align(
+            alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: MediaQuery.of(context).size.width * 0.75,
+              ),
+              child: GestureDetector(
+                onLongPress: () {
+                  if (isDeleted) return;
+                  _showOverlayWithMenus(context, canDelete);
+                },
+                child: AbsorbPointer(
+                  absorbing: isDeleted,
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: _getBubbleColor(),
+                      borderRadius: BorderRadius.only(
+                        topLeft: const Radius.circular(16),
+                        topRight: const Radius.circular(16),
+                        bottomLeft: Radius.circular(isMe ? 16 : 0),
+                        bottomRight: Radius.circular(isMe ? 0 : 16),
+                      ),
+                    ),
                     child: Column(
-                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment:
+                          isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
                       children: [
-                        ListTile(
-                          leading: const Icon(Icons.edit),
-                          title: const Text('Edit'),
-                          onTap: () {
-                            Navigator.of(ctx).pop();
-                            _editMessage(context);
-                          },
+                        if (!isMe && !isDeleted)
+                          FutureBuilder(
+                            future: FirebaseFirestore.instance
+                                .collection('users')
+                                .doc(senderId)
+                                .get(),
+                            builder: (context, snapshot) {
+                              if (snapshot.hasData) {
+                                final user = snapshot.data!.data();
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 4),
+                                  child: Text(
+                                    user?['displayName'] ?? 'Unknown',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.blue[800],
+                                    ),
+                                  ),
+                                );
+                              }
+                              return const SizedBox();
+                            },
+                          ),
+                        _buildMessageContent(context),
+                        const SizedBox(height: 4),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              timeString,
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: isMe ? Colors.white70 : Colors.black54,
+                              ),
+                            ),
+                            if (isMe && !isDeleted)
+                              Padding(
+                                padding: const EdgeInsets.only(left: 4),
+                                child: Icon(
+                                  Icons.done_all,
+                                  size: 12,
+                                  color: isMe ? Colors.white70 : Colors.black54,
+                                ),
+                              ),
+                          ],
                         ),
-                        ListTile(
-                          leading: const Icon(Icons.delete),
-                          title: const Text('Delete'),
-                          onTap: () {
-                            Navigator.of(ctx).pop();
-                            _deleteMessage(context);
-                          },
-                        ),
+                        if (reaction != null && reaction!.isNotEmpty)
+                          Container(
+                            margin: const EdgeInsets.only(top: 4),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade200,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                ...reaction!.values.toSet().map((emoji) {
+                                  return Padding(
+                                    padding: const EdgeInsets.only(right: 4),
+                                    child: Text(
+                                      emoji,
+                                      style: const TextStyle(fontSize: 16),
+                                    ),
+                                  );
+                                }).toList(),
+                                if (reaction!.length > 1)
+                                  Text(
+                                    reaction!.length.toString(),
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey[700],
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
                       ],
                     ),
                   ),
-                );
-              }
-            },
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: _getBubbleColor(),
-                borderRadius: BorderRadius.only(
-                  topLeft: const Radius.circular(16),
-                  topRight: const Radius.circular(16),
-                  bottomLeft: Radius.circular(isMe ? 16 : 0),
-                  bottomRight: Radius.circular(isMe ? 0 : 16),
                 ),
-              ),
-              child: Column(
-                crossAxisAlignment:
-                    isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                children: [
-                  if (!isMe && !isDeleted)
-                    FutureBuilder(
-                      future: FirebaseFirestore.instance
-                          .collection('users')
-                          .doc(senderId)
-                          .get(),
-                      builder: (context, snapshot) {
-                        if (snapshot.hasData) {
-                          final user = snapshot.data!.data();
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 4),
-                            child: Text(
-                              user?['displayName'] ?? 'Unknown',
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: Colors.blue[800],
-                              ),
-                            ),
-                          );
-                        }
-                        return const SizedBox();
-                      },
-                    ),
-                  _buildMessageContent(),
-                  const SizedBox(height: 4),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        timeString,
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: isMe ? Colors.white70 : Colors.black54,
-                        ),
-                      ),
-                      if (isMe && !isDeleted)
-                        Padding(
-                          padding: const EdgeInsets.only(left: 4),
-                          child: Icon(
-                            Icons.done_all,
-                            size: 12,
-                            color: isMe ? Colors.white70 : Colors.black54,
-                          ),
-                        ),
-                    ],
-                  ),
-                ],
               ),
             ),
           ),
         ),
-      ),
+        if (isMe) // Show profile picture for sent messages (smaller)
+          Padding(
+            padding: const EdgeInsets.only(left: 8),
+            child: _buildUserAvatar(currentUserId, small: true),
+          ),
+      ],
     ),
   );
 }
+
+Widget _buildUserAvatar(String? userId, {bool small = false}) {
+  if (userId == null) return const SizedBox();
+
+  return StreamBuilder<DocumentSnapshot>(
+    stream: FirebaseFirestore.instance
+        .collection('users')
+        .doc(userId)
+        .snapshots(),
+    builder: (context, snapshot) {
+      final photoUrl = snapshot.data?.get('photoURL');
+      final displayName = snapshot.data?.get('displayName') ?? '?';
+      
+      return CircleAvatar(
+        radius: small ? 14 : 18,
+        backgroundColor: Colors.grey[300],
+        backgroundImage: photoUrl != null ? NetworkImage(photoUrl) : null,
+        child: photoUrl == null
+            ? Text(
+                displayName.substring(0, 1).toUpperCase(),
+                style: TextStyle(
+                  color: Colors.grey[700],
+                  fontSize: small ? 12 : 14,
+                  fontWeight: FontWeight.bold,
+                ),
+              )
+            : null,
+      );
+    },
+  );
 }
+}
+
