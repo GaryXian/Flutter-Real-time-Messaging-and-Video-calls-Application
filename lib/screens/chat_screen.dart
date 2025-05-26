@@ -128,7 +128,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  void _startVoiceCall() {
+  void _startVoiceCall(bool isVideoCall) {
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -143,7 +143,7 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  void _startVideoCall() {
+  void _startVideoCall(bool isVideoCall) {
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -176,10 +176,13 @@ class _ChatScreenState extends State<ChatScreen> {
             icon: const Icon(Icons.info_outline),
             onPressed: () => _showChatInfo(context),
           ),
-          IconButton(icon: const Icon(Icons.call), onPressed: _startVoiceCall),
+          IconButton(
+            icon: const Icon(Icons.call),
+            onPressed: () => _startVoiceCall(false),
+          ),
           IconButton(
             icon: const Icon(Icons.videocam),
-            onPressed: _startVideoCall,
+            onPressed: () => _startVideoCall(true),
           ),
         ],
       ),

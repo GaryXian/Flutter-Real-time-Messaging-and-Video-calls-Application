@@ -374,7 +374,7 @@ class CallListenerService {
                           }
 
                           final callData =
-                              callDoc.data() as Map<String, dynamic>?;
+                              callDoc.data();
                           if (callData == null) {
                             print('Call data is null');
                             return;
