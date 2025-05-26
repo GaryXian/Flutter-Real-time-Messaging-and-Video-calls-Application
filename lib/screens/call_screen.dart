@@ -52,8 +52,6 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
   String? _peerName;
 
   Timer? _callTimer;
-  Timer? _heartbeatTimer;
-  Timer? _connectionTimeoutTimer;
   Duration _callDuration = Duration.zero;
 
   @override
@@ -193,7 +191,6 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
     }
 
     _startCallStatusListener();
-    _startHeartbeat();
     _startConnectionMonitoring();
 
     try {
@@ -226,25 +223,7 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
     }
   }
 
-  void _startHeartbeat() {
-    _heartbeatTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
-      if (!mounted || _isCallEnded) {
-        timer.cancel();
-        return;
-      }
 
-      try {
-        final currentUserId = _auth.currentUser?.uid;
-        if (currentUserId != null) {
-          await _firestore.collection('calls').doc(widget.conversationId).update({
-            'participantHeartbeats.$currentUserId': FieldValue.serverTimestamp(),
-          });
-        }
-      } catch (e) {
-        debugPrint('Heartbeat failed: $e');
-      }
-    });
-  }
 
   void _startConnectionMonitoring() {
     _connectionMonitorSubscription = _firestore
@@ -553,13 +532,7 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
           .collection('calls')
           .doc(widget.conversationId)
           .snapshots()
-          .timeout(
-            const Duration(seconds: 15),
-            onTimeout: (sink) {
-              debugPrint('Answer timeout, ending call.');
-              _endCall(userInitiated: false);
-            },
-          )
+
           .listen(
             (snapshot) async {
               if (!mounted || _isCallEnded || _peerConnection == null) {
@@ -717,8 +690,6 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
 
     // Cancel all timers
     _callTimer?.cancel();
-    _heartbeatTimer?.cancel();
-    _connectionTimeoutTimer?.cancel();
 
     // Cancel all subscriptions
     _callStatusSubscription?.cancel();
@@ -839,8 +810,6 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _callTimer?.cancel();
-    _heartbeatTimer?.cancel();
-    _connectionTimeoutTimer?.cancel();
     _callStatusSubscription?.cancel();
     _iceCandidatesSubscription?.cancel();
     _answerSubscription?.cancel();

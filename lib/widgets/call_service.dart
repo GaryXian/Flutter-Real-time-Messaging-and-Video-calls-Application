@@ -9,21 +9,53 @@ class CallListenerService {
   static StreamSubscription<QuerySnapshot>? _globalSubscription;
   static final Set<String> _handledCallIds = {}; // Track handled calls
   static final AudioPlayer _audioPlayer = AudioPlayer();
+  static Timer? _calloutTimer; // Timer to handle call timeout
   static StreamSubscription<DocumentSnapshot>?
   _activeCallSubscription; // Track active call dialog
   static bool _isDialogShowing = false; // Flag to prevent multiple dialogs
   static DateTime? _lastCallEndTime; // Track when the last call ended
   static String? _currentCallId; // Track the current call ID
+  static const Duration _callTimeoutDuration = Duration(seconds: 15);
+
 
   // Reset the service state completely
   static void resetServiceState() {
     _handledCallIds.clear();
     _isDialogShowing = false;
-    _activeCallSubscription?.cancel();
+    //_activeCallSubscription?.cancel();
     _activeCallSubscription = null;
     _currentCallId = null;
     _stopRingtone();
+    _cancelCallTimeout();
   }
+
+  static void _startCallTimeout(String conversationId, BuildContext context) {
+  _calloutTimer?.cancel(); // Cancel any existing timer
+  
+  _calloutTimer = Timer(_callTimeoutDuration, () {
+    // Auto-decline the call after timeout
+    FirebaseFirestore.instance
+        .collection('calls')
+        .doc(conversationId)
+        .update({'status': 'declined'}) // or 'declined' if you prefer
+        .catchError((error) {
+          print('Error auto-ending call: $error');
+        });
+    
+    // Dismiss dialog if it's still showing
+    if (_isDialogShowing && _currentCallId == conversationId && context.mounted) {
+      _dismissCurrentCallDialog(context);
+      
+    }
+  });
+}
+
+// Add this method to cancel the timeout timer
+static void _cancelCallTimeout() {
+  _calloutTimer?.cancel();
+  _calloutTimer = null;
+}
+
 
   static void startGlobalListening(BuildContext context, String currentUserId) {
     // Cancel existing subscription if any
@@ -248,9 +280,9 @@ class CallListenerService {
               ? (userDoc.data() != null ? userDoc.data()!['photoUrl'] : null)
               : null;
 
-      // Play ringtone
       await _playRingtone();
-
+      // Start call timeout timer
+      _startCallTimeout(conversationId, context);
       // Cancel any active call subscription before creating a new one
       _activeCallSubscription?.cancel();
 
@@ -337,6 +369,7 @@ class CallListenerService {
               actions: [
                 TextButton(
                   onPressed: () {
+                    _cancelCallTimeout();
                     _stopRingtone();
                     FirebaseFirestore.instance
                         .collection('calls')
@@ -351,6 +384,7 @@ class CallListenerService {
                 ),
                 TextButton(
                   onPressed: () {
+                    _cancelCallTimeout();
                     _stopRingtone();
                     // Accept the call
                     FirebaseFirestore.instance
@@ -429,11 +463,11 @@ class CallListenerService {
                           }
                         });
                   },
-                  child: const Text('Accept'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.green,
                     foregroundColor: Colors.white,
                   ),
+                  child: const Text('Accept'),
                 ),
               ],
             ),
@@ -456,6 +490,7 @@ class CallListenerService {
     _activeCallSubscription = null;
     _isDialogShowing = false;
     _lastCallEndTime = DateTime.now();
+    _cancelCallTimeout();
   }
 
   // Helper method to dismiss the current call dialog
@@ -470,7 +505,7 @@ class CallListenerService {
         print('Error dismissing call dialog: $e');
       }
     }
-
+    
     _cleanupCallState();
   }
 }

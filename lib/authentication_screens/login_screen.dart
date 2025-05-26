@@ -269,7 +269,7 @@ Future<void> requestPermissions() async {
     final userCredential = await FirebaseAuth.instance.signInWithCredential(credential);
     final user = userCredential.user;
     if (user != null) {
-      await _initializeUserData(user);   // <-- ADD THIS
+      await _initializeUserData(user);
     }
 
     Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const HomePage()));
@@ -408,7 +408,7 @@ Future<void> loginWithFacebook() async {
                     ),
                   ),
                   onPressed: loginWithGoogle,
-                  icon: Image.asset('lib/assets/images/google_icon.png', height: 40),
+                  icon: Image.asset('assets/images/google_icon.png', height: 40),
                   label: Text(' Google', style: TextStyle(
                     color: Colors.blueAccent
                   ),), // Ensure correct file path
