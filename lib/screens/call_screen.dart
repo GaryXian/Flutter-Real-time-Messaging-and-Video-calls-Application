@@ -183,15 +183,10 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
         'isVideoCall': _isVideoCall,
         'status': 'ringing',
         'startedAt': FieldValue.serverTimestamp(),
-        'lastHeartbeat': FieldValue.serverTimestamp(),
-        'participantHeartbeats': {
-          widget.callerId: FieldValue.serverTimestamp(),
-        },
       });
     }
 
     _startCallStatusListener();
-    _startConnectionMonitoring();
 
     try {
       await _initMediaDevices();
@@ -222,44 +217,6 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
       _handleError('Failed to establish call: $e');
     }
   }
-
-
-
-  void _startConnectionMonitoring() {
-    _connectionMonitorSubscription = _firestore
-        .collection('calls')
-        .doc(widget.conversationId)
-        .snapshots()
-        .listen((snapshot) {
-      if (!mounted || _isCallEnded) return;
-
-      if (!snapshot.exists || snapshot.data() == null) {
-        _endCall(userInitiated: false);
-        return;
-      }
-
-      final data = snapshot.data() as Map<String, dynamic>;
-      final heartbeats = data['participantHeartbeats'] as Map<String, dynamic>?;
-      
-      if (heartbeats != null) {
-        final currentUserId = _auth.currentUser?.uid;
-        final peerId = _isCaller ? widget.receiverId : widget.callerId;
-        
-        final peerHeartbeat = heartbeats[peerId];
-        if (peerHeartbeat != null) {
-          final lastHeartbeat = (peerHeartbeat as Timestamp).toDate();
-          final timeSinceLastHeartbeat = DateTime.now().difference(lastHeartbeat);
-          
-          // If peer hasn't sent heartbeat in 15 seconds, consider them disconnected
-          if (timeSinceLastHeartbeat.inSeconds > 15) {
-            debugPrint('Peer disconnected - no heartbeat for ${timeSinceLastHeartbeat.inSeconds} seconds');
-            _endCall(userInitiated: false);
-          }
-        }
-      }
-    });
-  }
-
   void _startCallStatusListener() {
     _callStatusSubscription = _firestore
         .collection('calls')
