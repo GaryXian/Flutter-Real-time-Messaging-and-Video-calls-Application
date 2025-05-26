@@ -121,7 +121,7 @@ class CallListenerService {
 
   static Future<void> _playRingtone() async {
     try {
-      await _audioPlayer.play(AssetSource('../assets/ringtone.mp3'), volume: 1.0);
+      await _audioPlayer.play(AssetSource('ringtone.mp3'), volume: 1.0);
     } catch (e) {
       print('Error playing ringtone: $e');
     }
