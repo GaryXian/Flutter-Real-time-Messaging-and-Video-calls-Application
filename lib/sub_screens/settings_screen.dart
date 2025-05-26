@@ -19,17 +19,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       body: ListView(
         children: [
-          ListTile(
-            leading: const Icon(Icons.brightness_6),
-            title: const Text('Dark theme'),
-            subtitle: const Text('Enable or disable dark theme'),
-            trailing: Switch(
-              value: Provider.of<ThemeProvider>(context, listen: false).isDarkMode,
-              onChanged: (isDarkMode) {
-                Provider.of<ThemeProvider>(context, listen: false)
-                    .toggleTheme();
-              }
-            ),
+          Consumer<ThemeProvider>(
+            builder: (context, themeProvider, child) {
+              return ListTile(
+                leading: const Icon(Icons.brightness_6),
+                title: const Text('Dark theme'),
+                subtitle: const Text('Enable or disable dark theme'),
+                trailing: Switch(
+                  activeColor: Colors.white,
+                  value: themeProvider.isDarkMode,
+                  onChanged: (isDarkMode) {
+                    themeProvider.toggleTheme();
+                  },
+                ),
+              );
+            },
           ),
           const Divider(),
         ],
