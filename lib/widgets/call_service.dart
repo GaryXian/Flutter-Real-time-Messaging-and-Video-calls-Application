@@ -15,7 +15,7 @@ class CallListenerService {
   static bool _isDialogShowing = false; // Flag to prevent multiple dialogs
   static DateTime? _lastCallEndTime; // Track when the last call ended
   static String? _currentCallId; // Track the current call ID
-  static const Duration _callTimeoutDuration = Duration(seconds: 15);
+  static const Duration _callTimeoutDuration = Duration(seconds: 30);
 
 
   // Reset the service state completely
@@ -253,7 +253,7 @@ static void _cancelCallTimeout() {
     _isDialogShowing = true;
     _currentCallId = conversationId;
     _handledCallIds.add(conversationId); // Mark this call as handled
-
+    await Future.delayed(Duration(milliseconds: 500));
     try {
       // Get caller information
       final userDoc =
@@ -508,4 +508,5 @@ static void _cancelCallTimeout() {
     
     _cleanupCallState();
   }
+  
 }

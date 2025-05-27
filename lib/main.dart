@@ -9,8 +9,6 @@ import 'main_screens/messages_screen.dart';
 import 'main_screens/profile_screen.dart';
 import 'authentication_screens/login_screen.dart';
 import 'sub_screens/settings_screen.dart';
-import 'sub_screens/test_call.dart';
-import 'sub_screens/test_message.dart';
 import 'widgets/change_theme.dart';
 
 void main() async {
@@ -39,8 +37,6 @@ class MyApp extends StatelessWidget {
         '/contacts': (ctx) => const ContactsScreen(),
         '/profile': (ctx) => const ProfileScreen(),
         '/settings': (ctx) => const SettingsScreen(),
-        '/test-message': (ctx) => const TestMessageScreen(),
-        '/test-call': (ctx) => const TestCallScreen(),
       },
       home: StreamBuilder<User?>(
         stream: FirebaseAuth.instance.authStateChanges(),

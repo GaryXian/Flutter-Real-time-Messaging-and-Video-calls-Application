@@ -217,6 +217,7 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
       _handleError('Failed to establish call: $e');
     }
   }
+
   void _startCallStatusListener() {
     _callStatusSubscription = _firestore
         .collection('calls')
