@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:realtime_message_calling/main_screens/messages_screen.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/message_input.dart';
 import 'call_screen.dart';
@@ -390,79 +391,76 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _confirmDeleteConversation(BuildContext context) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder:
-          (ctx) => AlertDialog(
-            title: const Text('Delete Conversation?'),
-            content: const Text(
-              'All messages and calls will be permanently deleted.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('Cancel'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: const Text(
-                  'Delete',
-                  style: TextStyle(color: Colors.red),
-                ),
-              ),
-            ],
+  final confirm = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Delete Conversation?'),
+      content: const Text(
+        'All messages and calls will be permanently deleted.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text(
+            'Delete',
+            style: TextStyle(color: Colors.red),
           ),
-    );
+        ),
+      ],
+    ),
+  );
 
-    if (confirm != true) return;
+  if (confirm != true) return;
 
-    try {
-      final batch = _firestore.batch();
+  try {
+    final batch = _firestore.batch();
 
-      // Delete messages
-      final messagesRef = _firestore
-          .collection('conversations')
-          .doc(widget.conversationId)
-          .collection('messages');
-      final messages = await messagesRef.get();
-      for (final doc in messages.docs) {
+    // Delete messages
+    final messagesRef = _firestore
+        .collection('conversations')
+        .doc(widget.conversationId)
+        .collection('messages');
+    final messages = await messagesRef.get();
+    for (final doc in messages.docs) {
+      batch.delete(doc.reference);
+    }
+
+    // Delete call data (calls + iceCandidates)
+    final callDocRef = _firestore.collection('calls').doc(widget.conversationId);
+    final callDoc = await callDocRef.get();
+    if (callDoc.exists) {
+      final candidatesRef = callDocRef.collection('iceCandidates');
+      final candidates = await candidatesRef.get();
+      for (final doc in candidates.docs) {
         batch.delete(doc.reference);
       }
-
-      // Delete call data (calls + iceCandidates)
-      final callDocRef = _firestore
-          .collection('calls')
-          .doc(widget.conversationId);
-      final callDoc = await callDocRef.get();
-      if (callDoc.exists) {
-        // Delete iceCandidates
-        final candidatesRef = callDocRef.collection('iceCandidates');
-        final candidates = await candidatesRef.get();
-        for (final doc in candidates.docs) {
-          batch.delete(doc.reference);
-        }
-        batch.delete(callDocRef);
-      }
-
-      // Delete conversation document
-      final conversationRef = _firestore
-          .collection('conversations')
-          .doc(widget.conversationId);
-      batch.delete(conversationRef);
-
-      await batch.commit();
-
-      if (mounted) {
-        Navigator.pop(context);
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to delete: ${e.toString()}')),
-        );
-      }
+      batch.delete(callDocRef);
     }
+
+    // Delete conversation document
+    final conversationRef = _firestore.collection('conversations').doc(widget.conversationId);
+    batch.delete(conversationRef);
+
+    await batch.commit();
+
+    if (!context.mounted) return;
+
+Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (context) => const MessagesScreen()),
+);
+  } catch (e) {
+    if (!context.mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Failed to delete: ${e.toString()}')),
+    );
   }
+}
+
 
   @override
   void dispose() {

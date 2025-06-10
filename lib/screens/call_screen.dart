@@ -328,52 +328,38 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
     if (!mounted) return;
 
     try {
-      final mediaConstraints = _isVideoCall
-          ? {
-              'audio': true,
-              'video': {
-                'facingMode': 'user',
-                'width': {'ideal': 320},
-                'height': {'ideal': 240},
-                'frameRate': {'ideal': 24},
-              },
-            }
-          : {'audio': true, 'video': false};
+      final mediaConstraints =
+          _isVideoCall
+              ? {
+                'audio': {
+                  'echoCancellation': true,
+                  'noiseSuppression': true,
+                  'autoGainControl': true,
+                },
+                'video': {
+                  'facingMode': 'user',
+                  'width': {'min': 320, 'ideal': 640, 'max': 1280},
+                  'height': {'min': 240, 'ideal': 480, 'max': 720},
+                  'frameRate': {'min': 15, 'ideal': 24, 'max': 30},
+                },
+              }
+              : {
+                'audio': {
+                  'echoCancellation': true,
+                  'noiseSuppression': true,
+                  'autoGainControl': true,
+                },
+                'video': false,
+              };
 
-      print('Requesting media with constraints: $mediaConstraints');
-
-      try {
-        _localStream = await navigator.mediaDevices.getUserMedia(
-          mediaConstraints,
-        );
-      } catch (e) {
-        debugPrint('getUserMedia error: $e');
-
-        if (_isVideoCall) {
-          _localStream = await navigator.mediaDevices.getUserMedia({
-            'audio': true,
-            'video': true,
-          });
-        } else {
-          throw Exception('Failed to access media devices: $e');
-        }
-      }
-
-      if (_localStream == null) {
-        throw Exception('Failed to get media stream');
-      }
+      _localStream = await navigator.mediaDevices.getUserMedia(
+        mediaConstraints,
+      );
 
       if (mounted) {
         setState(() {
           _localRenderer.srcObject = _localStream;
         });
-      }
-
-      print(
-        'Media stream initialized with ${_localStream!.getTracks().length} tracks',
-      );
-      for (var track in _localStream!.getTracks()) {
-        print('Track: ${track.kind}, enabled: ${track.enabled}');
       }
     } catch (e) {
       _handleError('Error accessing media devices: $e');
@@ -394,12 +380,21 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
           'username': 'openrelayproject',
           'credential': 'openrelayproject',
         },
+        {
+          'urls': 'turn:openrelay.metered.ca:443',
+          'username': 'openrelayproject',
+          'credential': 'openrelayproject',
+        },
       ],
+      'iceTransportPolicy': 'all',
+      'bundlePolicy': 'max-bundle',
+      'rtcpMuxPolicy': 'require',
     };
 
     try {
       _peerConnection = await createPeerConnection(config);
 
+      // Add local stream tracks
       if (_localStream != null) {
         for (var track in _localStream!.getTracks()) {
           await _peerConnection?.addTrack(track, _localStream!);
@@ -415,9 +410,9 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
         }
       };
 
-      _peerConnection?.onIceCandidate = (candidate) {
+      _peerConnection?.onIceCandidate = (candidate) async {
         if (candidate.candidate != null && !_isCallEnded) {
-          _firestore
+          await _firestore
               .collection('calls')
               .doc(widget.conversationId)
               .collection('iceCandidates')
@@ -432,13 +427,8 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
 
       _peerConnection?.onConnectionState = (state) {
         debugPrint('Connection state changed: $state');
-        if ((state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
-                state == RTCPeerConnectionState.RTCPeerConnectionStateClosed ||
-                state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) &&
-            !_isCallEnded) {
-          // Don't attempt ICE restart, just end the call
-          debugPrint('Connection failed/closed/disconnected - ending call');
-          _endCall(userInitiated: false);
+        if (_shouldRestartIce(state)) {
+          _attemptIceRestart();
         }
       };
 
@@ -450,18 +440,58 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
             _isConnected = true;
             _callStatus = 'Connected';
           });
-        } else if ((state == RTCIceConnectionState.RTCIceConnectionStateFailed ||
-                state == RTCIceConnectionState.RTCIceConnectionStateDisconnected ||
-                state == RTCIceConnectionState.RTCIceConnectionStateClosed) &&
-            !_isCallEnded) {
-          debugPrint('ICE connection failed/disconnected/closed - ending call');
-          _endCall(userInitiated: false);
+        } else if (_shouldRestartIce(state)) {
+          _attemptIceRestart();
         }
       };
 
       _listenForIceCandidates();
     } catch (e) {
-      throw Exception('Error initializing peer connection: $e');
+      debugPrint('Error initializing peer connection: $e');
+      _handleError('Failed to establish peer connection.');
+    }
+  }
+
+  bool _shouldRestartIce(dynamic state) {
+    return (state == RTCIceConnectionState.RTCIceConnectionStateFailed ||
+            state == RTCIceConnectionState.RTCIceConnectionStateDisconnected ||
+            state == RTCIceConnectionState.RTCIceConnectionStateClosed) &&
+        !_isCallEnded;
+  }
+
+  Future<void> _attemptIceRestart() async {
+    if (_isCallEnded || _peerConnection == null) return;
+
+    try {
+      debugPrint('Attempting ICE restart...');
+
+      if (_isCaller) {
+        // Caller creates new offer with ICE restart
+        final offer = await _peerConnection!.createOffer({
+          'offerToReceiveAudio': 1,
+          'offerToReceiveVideo': _isVideoCall ? 1 : 0,
+          'iceRestart': true, // CRITICAL: Enable ICE restart
+        });
+
+        await _peerConnection!.setLocalDescription(offer);
+
+        await _firestore.collection('calls').doc(widget.conversationId).update({
+          'type': 'offer',
+          'sdp': offer.sdp,
+          'iceRestart': true,
+        });
+      }
+
+      // Set status to reconnecting
+      if (mounted) {
+        setState(() {
+          _callStatus = 'Reconnecting...';
+        });
+      }
+    } catch (e) {
+      debugPrint('ICE restart failed: $e');
+      // If restart fails, end the call
+      _endCall(userInitiated: false);
     }
   }
 
@@ -473,6 +503,8 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
       final offerOptions = {
         'offerToReceiveAudio': 1,
         'offerToReceiveVideo': _isVideoCall ? 1 : 0,
+        'iceRestart': false, // Set to true if you want to enable ICE restart
+        'voiceActivityDetection': true, // Enable VAD
       };
 
       final offer = await _peerConnection!.createOffer(offerOptions);
@@ -484,50 +516,45 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
       await _firestore.collection('calls').doc(widget.conversationId).update({
         'type': 'offer',
         'sdp': offer.sdp,
+        'isVideoCall': _isVideoCall,
+        'timestamp': FieldValue.serverTimestamp(),
       });
-
-      _answerSubscription = _firestore
-          .collection('calls')
-          .doc(widget.conversationId)
-          .snapshots()
-
-          .listen(
-            (snapshot) async {
-              if (!mounted || _isCallEnded || _peerConnection == null) {
-                _answerSubscription?.cancel();
-                return;
-              }
-
-              if (!snapshot.exists) return;
-
-              final data = snapshot.data();
-              if (data == null) return;
-
-              if (data['type'] == 'answer' && data['sdp'] != null) {
-                try {
-                  if (_isCallEnded || !mounted) return;
-
-                  final remoteDesc =
-                      await _peerConnection?.getRemoteDescription();
-                  if (remoteDesc == null && mounted && !_isCallEnded) {
-                    final answer = RTCSessionDescription(
-                      data['sdp'],
-                      data['type'],
-                    );
-                    await _peerConnection?.setRemoteDescription(answer);
-                  }
-                } catch (e) {
-                  debugPrint('Error setting remote description: $e');
-                }
-              }
-            },
-            onError: (e) {
-              debugPrint('Error listening for answer: $e');
-            },
-          );
+      _listenForAnswerWithTimeout();
     } catch (e) {
       _handleError('Error creating offer: $e');
     }
+  }
+
+  void _listenForAnswerWithTimeout() {
+    Timer? answerTimeout = Timer(Duration(seconds: 30), () {
+      if (!_isCallAccepted && !_isCallEnded) {
+        debugPrint('Answer timeout - ending call');
+        _endCall(userInitiated: false);
+      }
+    });
+
+    _answerSubscription = _firestore
+        .collection('calls')
+        .doc(widget.conversationId)
+        .snapshots()
+        .listen((snapshot) async {
+          if (!mounted || _isCallEnded) {
+            answerTimeout.cancel();
+            return;
+          }
+
+          final data = snapshot.data();
+          if (data?['type'] == 'answer' && data?['sdp'] != null) {
+            answerTimeout.cancel();
+
+            try {
+              final answer = RTCSessionDescription(data!['sdp'], data['type']);
+              await _peerConnection?.setRemoteDescription(answer);
+            } catch (e) {
+              debugPrint('Error setting remote description: $e');
+            }
+          }
+        });
   }
 
   Future<void> _listenForOffer() async {
@@ -634,7 +661,7 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
 
   Future<void> _endCall({bool userInitiated = true}) async {
     if (_isDisconnecting || _isCallEnded) return;
-    
+
     _isDisconnecting = true;
     _isCallEnded = true;
 
@@ -682,18 +709,22 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
     // Clean up Firestore data after a delay
     Future.delayed(const Duration(seconds: 3), () async {
       try {
-        final candidatesSnapshot = await _firestore
-            .collection('calls')
-            .doc(widget.conversationId)
-            .collection('iceCandidates')
-            .get();
+        final candidatesSnapshot =
+            await _firestore
+                .collection('calls')
+                .doc(widget.conversationId)
+                .collection('iceCandidates')
+                .get();
 
         for (var doc in candidatesSnapshot.docs) {
           await doc.reference.delete();
         }
 
         // Delete the call document
-        await _firestore.collection('calls').doc(widget.conversationId).delete();
+        await _firestore
+            .collection('calls')
+            .doc(widget.conversationId)
+            .delete();
       } catch (e) {
         debugPrint('Error cleaning up Firestore: $e');
       }
@@ -752,9 +783,9 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
         _callStatus = 'Error: $message';
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
 
       Future.delayed(const Duration(seconds: 2), () {
         if (mounted && !_isCallEnded) {

@@ -12,8 +12,7 @@ import 'package:dio/dio.dart';
 
 import 'message_input.dart';
 
-class MessageBubble extends StatelessWidget {
-  final ValueNotifier<MessageBubble?> replyNotifier = ValueNotifier(null);
+class MessageBubble extends StatefulWidget {
   final String messageId;
   final String senderId;
   final String content;
@@ -23,11 +22,6 @@ class MessageBubble extends StatelessWidget {
   final Timestamp timestamp;
   final bool isMe;
   final String conversationId;
-  Timer? _typingTimer;
-  bool _isTyping = false;
-  final _messageController = TextEditingController();
-  final _currentUserId = FirebaseAuth.instance.currentUser!.uid;
-  final _conversationId = 'your_conversation_id'; // dynamically assigned
   final bool isTyping;
   final bool isDeleted; // New field to track deleted status
   final Map<String, String>? reaction; // New field for reactions
@@ -48,6 +42,22 @@ class MessageBubble extends StatelessWidget {
     this.reaction,
   });
 
+  @override
+  State<MessageBubble> createState() => _MessageBubbleState();
+}
+
+class _MessageBubbleState extends State<MessageBubble> {
+  final ValueNotifier<MessageBubble?> replyNotifier = ValueNotifier(null);
+
+  Timer? _typingTimer;
+
+  bool _isTyping = false;
+
+  final _messageController = TextEditingController();
+
+  final _currentUserId = FirebaseAuth.instance.currentUser!.uid;
+
+  final _conversationId = 'your_conversation_id'; 
   Future<void> _deleteMessage(BuildContext context) async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -75,9 +85,9 @@ class MessageBubble extends StatelessWidget {
       try {
         final messageRef = FirebaseFirestore.instance
             .collection('conversations')
-            .doc(conversationId)
+            .doc(widget.conversationId)
             .collection('messages')
-            .doc(messageId);
+            .doc(widget.messageId);
 
         // Get the message before deleting it
         final messageSnapshot = await messageRef.get();
@@ -88,12 +98,12 @@ class MessageBubble extends StatelessWidget {
         final conversation =
             await FirebaseFirestore.instance
                 .collection('conversations')
-                .doc(conversationId)
+                .doc(widget.conversationId)
                 .get();
 
         if (conversation.exists &&
-            conversation.data()?['lastMessageId'] == messageId) {
-          await _updateLastMessageAfterDeletion(conversationId);
+            conversation.data()?['lastMessageId'] == widget.messageId) {
+          await _updateLastMessageAfterDeletion(widget.conversationId);
         }
       } catch (e) {
         if (context.mounted) {
@@ -204,7 +214,7 @@ class MessageBubble extends StatelessWidget {
 
   Widget _buildMessageContent(BuildContext context) {
     // If the message is deleted, show deleted message indicator
-    if (isDeleted) {
+    if (widget.isDeleted) {
       return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -215,7 +225,7 @@ class MessageBubble extends StatelessWidget {
             style: TextStyle(
               fontSize: 14,
               fontStyle: FontStyle.italic,
-              color: isMe ? Colors.white70 : Colors.grey[600],
+              color: widget.isMe ? Colors.white70 : Colors.grey[600],
             ),
           ),
         ],
@@ -223,15 +233,15 @@ class MessageBubble extends StatelessWidget {
     }
 
     // Original content display logic
-    switch (messageType) {
+    switch (widget.messageType) {
       case 'image':
-        return fileUrl != null
+        return widget.fileUrl != null
             ? GestureDetector(
-              onTap: () => _showFullScreenImage(context, fileUrl!),
+              onTap: () => _showFullScreenImage(context, widget.fileUrl!),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(12),
                 child: Image.network(
-                  fileUrl!,
+                  widget.fileUrl!,
                   width: 250,
                   height: 250,
                   fit: BoxFit.cover,
@@ -266,8 +276,8 @@ class MessageBubble extends StatelessWidget {
       case 'file':
         return GestureDetector(
           onTap: () {
-            if (fileUrl != null) {
-              _downloadFile(fileUrl!);
+            if (widget.fileUrl != null) {
+              _downloadFile(widget.fileUrl!);
             }
           },
           child: Column(
@@ -276,18 +286,18 @@ class MessageBubble extends StatelessWidget {
               const Icon(Icons.insert_drive_file, size: 40),
               const SizedBox(height: 8),
               Text(
-                content.isNotEmpty ? content : 'Sent a file',
+                widget.content.isNotEmpty ? widget.content : 'Sent a file',
                 style: TextStyle(
                   fontSize: 16,
-                  color: isMe ? Colors.white : Colors.black87,
+                  color: widget.isMe ? Colors.white : Colors.black87,
                 ),
               ),
-              if (fileUrl != null)
+              if (widget.fileUrl != null)
                 Text(
                   'Tap to download',
                   style: TextStyle(
                     fontSize: 12,
-                    color: isMe ? Colors.white70 : Colors.black54,
+                    color: widget.isMe ? Colors.white70 : Colors.black54,
                   ),
                 ),
             ],
@@ -296,10 +306,10 @@ class MessageBubble extends StatelessWidget {
 
       default:
         return Text(
-          content,
+          widget.content,
           style: TextStyle(
             fontSize: 16,
-            color: isMe ? Colors.white : Colors.black87,
+            color: widget.isMe ? Colors.white : Colors.black87,
           ),
         );
     }
@@ -307,9 +317,9 @@ class MessageBubble extends StatelessWidget {
 
   void _replyMessage(BuildContext context) {
     final replyData = ReplyData(
-      messageId: messageId,
-      content: content,
-      senderId: senderId,
+      messageId: widget.messageId,
+      content: widget.content,
+      senderId: widget.senderId,
     );
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -322,14 +332,14 @@ class MessageBubble extends StatelessWidget {
 
   void _editMessage(BuildContext context) async {
     // Prevent editing deleted messages
-    if (isDeleted) {
+    if (widget.isDeleted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('This message has been deleted.')),
       );
       return;
     }
 
-    final controller = TextEditingController(text: content);
+    final controller = TextEditingController(text: widget.content);
     final newContent = await showDialog<String>(
       context: context,
       builder:
@@ -355,12 +365,12 @@ class MessageBubble extends StatelessWidget {
 
     if (newContent != null &&
         newContent.trim().isNotEmpty &&
-        newContent != content) {
+        newContent != widget.content) {
       await FirebaseFirestore.instance
           .collection('conversations')
-          .doc(conversationId)
+          .doc(widget.conversationId)
           .collection('messages')
-          .doc(messageId)
+          .doc(widget.messageId)
           .update({
             'content': newContent.trim(),
             'edited': true,
@@ -409,25 +419,25 @@ class MessageBubble extends StatelessWidget {
   }
 
   void _copyMessage(BuildContext context) {
-    Clipboard.setData(ClipboardData(text: content));
+    Clipboard.setData(ClipboardData(text: widget.content));
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Message copied to clipboard')),
     );
   }
 
   Color _getBubbleColor() {
-    if (isDeleted) {
-      return isMe ? Colors.blueGrey.withOpacity(0.5) : Colors.grey[200]!;
+    if (widget.isDeleted) {
+      return widget.isMe ? Colors.blueGrey.withOpacity(0.5) : Colors.grey[200]!;
     }
 
-    if (messageType == 'image' || messageType == 'video' && isMe) {
+    if (widget.messageType == 'image' || widget.messageType == 'video' && widget.isMe) {
       return Colors.transparent; // No background for user's image
     }
 
-    if (isMe) {
+    if (widget.isMe) {
       return Colors.blueAccent;
     } else {
-      return messageType == 'text' ? Colors.grey[300]! : Colors.grey[200]!;
+      return widget.messageType == 'text' ? Colors.grey[300]! : Colors.grey[200]!;
     }
   }
 
@@ -479,7 +489,6 @@ void _showOverlayWithMenus(BuildContext context, bool canDelete) {
   overlay.insert(overlayEntry);
 }
 
-
 List<Widget> _buildMenuItems(
   BuildContext context,
   bool canDelete,
@@ -487,13 +496,13 @@ List<Widget> _buildMenuItems(
 ) {
   final List<Widget> items = [];
 
-  if (messageType == 'text') {
+  if (widget.messageType == 'text') {
     items.add(_buildOptionItem(
       'Copy',
       Icons.copy,
       () {
         overlayEntry.remove();
-        Clipboard.setData(ClipboardData(text: content));
+        Clipboard.setData(ClipboardData(text: widget.content));
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Message copied')),
         );
@@ -629,11 +638,11 @@ Widget _buildOptionsMenu(BuildContext context, Offset position, List<Widget> ite
     final currentUserId = FirebaseAuth.instance.currentUser!.uid;
 
     // Create a new map if reactions are null
-    final updatedReactions = reaction ?? {};
+    final updatedReactions = widget.reaction ?? {};
     updatedReactions[currentUserId] = emoji;
 
     // Update the message in Firestore
-    FirebaseFirestore.instance.collection('messages').doc(messageId).update({
+    FirebaseFirestore.instance.collection('messages').doc(widget.messageId).update({
       'reaction': updatedReactions,
     });
   }
@@ -641,34 +650,34 @@ Widget _buildOptionsMenu(BuildContext context, Offset position, List<Widget> ite
 @override
 Widget build(BuildContext context) {
   final currentUserId = FirebaseAuth.instance.currentUser?.uid;
-  final canDelete = senderId == currentUserId && !isDeleted;
-  final timeString = DateFormat('h:mm a').format(timestamp.toDate());
+  final canDelete = widget.senderId == currentUserId && !widget.isDeleted;
+  final timeString = DateFormat('h:mm a').format(widget.timestamp.toDate());
 
   return Padding(
     padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.end,
-      mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+      mainAxisAlignment: widget.isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
       children: [
-        if (!isMe) // Show profile picture for received messages
+        if (!widget.isMe) // Show profile picture for received messages
           Padding(
             padding: const EdgeInsets.only(right: 8),
-            child: _buildUserAvatar(senderId),
+            child: _buildUserAvatar(widget.senderId),
           ),
         Flexible(
           child: Align(
-            alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+            alignment: widget.isMe ? Alignment.centerRight : Alignment.centerLeft,
             child: ConstrainedBox(
               constraints: BoxConstraints(
                 maxWidth: MediaQuery.of(context).size.width * 0.75,
               ),
               child: GestureDetector(
                 onLongPress: () {
-                  if (isDeleted) return;
+                  if (widget.isDeleted) return;
                   _showOverlayWithMenus(context, canDelete);
                 },
                 child: AbsorbPointer(
-                  absorbing: isDeleted,
+                  absorbing: widget.isDeleted,
                   child: Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
@@ -676,19 +685,19 @@ Widget build(BuildContext context) {
                       borderRadius: BorderRadius.only(
                         topLeft: const Radius.circular(16),
                         topRight: const Radius.circular(16),
-                        bottomLeft: Radius.circular(isMe ? 16 : 0),
-                        bottomRight: Radius.circular(isMe ? 0 : 16),
+                        bottomLeft: Radius.circular(widget.isMe ? 16 : 0),
+                        bottomRight: Radius.circular(widget.isMe ? 0 : 16),
                       ),
                     ),
                     child: Column(
                       crossAxisAlignment:
-                          isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                          widget.isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
                       children: [
-                        if (!isMe && !isDeleted)
+                        if (!widget.isMe && !widget.isDeleted)
                           FutureBuilder(
                             future: FirebaseFirestore.instance
                                 .collection('users')
-                                .doc(senderId)
+                                .doc(widget.senderId)
                                 .get(),
                             builder: (context, snapshot) {
                               if (snapshot.hasData) {
@@ -716,21 +725,21 @@ Widget build(BuildContext context) {
                               timeString,
                               style: TextStyle(
                                 fontSize: 10,
-                                color: isMe ? Colors.white70 : Colors.black54,
+                                color: widget.isMe ? Colors.white70 : Colors.black54,
                               ),
                             ),
-                            if (isMe && !isDeleted)
+                            if (widget.isMe && !widget.isDeleted)
                               Padding(
                                 padding: const EdgeInsets.only(left: 4),
                                 child: Icon(
                                   Icons.done_all,
                                   size: 12,
-                                  color: isMe ? Colors.white70 : Colors.black54,
+                                  color: widget.isMe ? Colors.white70 : Colors.black54,
                                 ),
                               ),
                           ],
                         ),
-                        if (reaction != null && reaction!.isNotEmpty)
+                        if (widget.reaction != null && widget.reaction!.isNotEmpty)
                           Container(
                             margin: const EdgeInsets.only(top: 4),
                             padding: const EdgeInsets.symmetric(
@@ -744,7 +753,7 @@ Widget build(BuildContext context) {
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                ...reaction!.values.toSet().map((emoji) {
+                                ...widget.reaction!.values.toSet().map((emoji) {
                                   return Padding(
                                     padding: const EdgeInsets.only(right: 4),
                                     child: Text(
@@ -753,9 +762,9 @@ Widget build(BuildContext context) {
                                     ),
                                   );
                                 }).toList(),
-                                if (reaction!.length > 1)
+                                if (widget.reaction!.length > 1)
                                   Text(
-                                    reaction!.length.toString(),
+                                    widget.reaction!.length.toString(),
                                     style: TextStyle(
                                       fontSize: 12,
                                       color: Colors.grey[700],
@@ -772,7 +781,7 @@ Widget build(BuildContext context) {
             ),
           ),
         ),
-        if (isMe) // Show profile picture for sent messages (smaller)
+        if (widget.isMe) // Show profile picture for sent messages (smaller)
           Padding(
             padding: const EdgeInsets.only(left: 8),
             child: _buildUserAvatar(currentUserId, small: true),
