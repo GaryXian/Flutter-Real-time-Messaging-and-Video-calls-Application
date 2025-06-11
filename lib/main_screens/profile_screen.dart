@@ -10,6 +10,7 @@ import '../authentication_screens/login_screen.dart';
 import '../sub_screens/settings_screen.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter/services.dart';
 
 
 class ProfileScreen extends StatefulWidget {
@@ -220,13 +221,17 @@ void _showUploadDialog(BuildContext context) {
       title: const Text('Uploading Profile Picture'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          LinearProgressIndicator(
-            value: _isUploading ? _uploadProgress : null,
-          ),
+          const Text('Please wait while your profile picture is uploading.'),
           const SizedBox(height: 16),
+          LinearProgressIndicator(value: _isUploading ? _uploadProgress : null),
+          const SizedBox(height: 8),
           if (_isUploading)
-            Text('${(_uploadProgress * 100).toStringAsFixed(1)}%'),
+            Align(
+              alignment: Alignment.centerRight,
+              child: Text('${(_uploadProgress * 100).toStringAsFixed(1)}%'),
+            ),
         ],
       ),
       actions: [
@@ -254,15 +259,29 @@ void dispose() {
       context: context,
       builder: (_) => AlertDialog(
         title: Text(title),
-        content: TextField(
-          controller: controller,
-          obscureText: isPassword,
-          keyboardType: inputType,
-          decoration: InputDecoration(hintText: 'Enter new ${field.toLowerCase()}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: controller,
+              obscureText: isPassword,
+              keyboardType: inputType,
+              decoration: InputDecoration(
+                hintText: 'Enter new ${field.toLowerCase()}',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: const Text('Save')),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+              const SizedBox(width: 8),
+              ElevatedButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: const Text('Save')),
+            ],
+          ),
         ],
       ),
     );
@@ -293,14 +312,28 @@ void dispose() {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Change Phone Number'),
-        content: TextField(
-          controller: controller,
-          keyboardType: TextInputType.phone,
-          decoration: const InputDecoration(hintText: '+1234567890'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: controller,
+              keyboardType: TextInputType.phone,
+              decoration: const InputDecoration(
+                hintText: '+1234567890',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: const Text('Verify')),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+              const SizedBox(width: 8),
+              ElevatedButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: const Text('Verify')),
+            ],
+          ),
         ],
       ),
     );
@@ -331,20 +364,38 @@ void dispose() {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Enter SMS Code'),
-        content: TextField(controller: controller, keyboardType: TextInputType.number, decoration: const InputDecoration(hintText: '6-digit code')),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: controller,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                hintText: '6-digit code',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          TextButton(
-            onPressed: () async {
-              final code = controller.text.trim();
-              if (code.isNotEmpty) {
-                final credential = PhoneAuthProvider.credential(verificationId: verificationId, smsCode: code);
-                await _currentUser!.updatePhoneNumber(credential);
-                await _updateFirestorePhone(newPhone);
-                Navigator.pop(context);
-              }
-            },
-            child: const Text('Submit'),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+              const SizedBox(width: 8),
+              ElevatedButton(
+                onPressed: () async {
+                  final code = controller.text.trim();
+                  if (code.isNotEmpty) {
+                    final credential = PhoneAuthProvider.credential(verificationId: verificationId, smsCode: code);
+                    await _currentUser!.updatePhoneNumber(credential);
+                    await _updateFirestorePhone(newPhone);
+                    Navigator.pop(context);
+                  }
+                },
+                child: const Text('Submit'),
+              ),
+            ],
           ),
         ],
       ),
@@ -364,13 +415,13 @@ void dispose() {
         title: const Text("Log out"),
         content: const Text("Are you sure you want to log out?"),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text("Cancel"),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text("Log out"),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
+              const SizedBox(width: 8),
+              ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Log out")),
+            ],
           ),
         ],
       ),
@@ -384,36 +435,39 @@ void dispose() {
   }
 
   @override
-Widget build(BuildContext context) {
-  return Scaffold(
-    appBar: AppBar(
-      elevation: 0,
-      backgroundColor: Colors.transparent,
-      automaticallyImplyLeading: false,
-      actions: [
-        IconButton(
-          icon: const Icon(Icons.settings, color: Colors.black),
-          onPressed: () {
-            Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
-          },
-        ),
-      ],
-    ),
-    body: _isLoading
-        ? const Center(child: CircularProgressIndicator())
-        : SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildProfileCard(),
-                const SizedBox(height: 16),
-                _buildMenuCard(),
-              ],
-            ),
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        systemOverlayStyle: Theme.of(context).brightness == Brightness.dark
+      ? SystemUiOverlayStyle.light // White icons for dark background
+      : SystemUiOverlayStyle.dark, // Dark icons for light background
+        elevation: 0,
+        backgroundColor: Colors.transparent,
+        automaticallyImplyLeading: false,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: () {
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
+            },
           ),
-  );
-}
+        ],
+      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildProfileCard(),
+                  const SizedBox(height: 16),
+                  _buildMenuCard(),
+                ],
+              ),
+            ),
+    );
+  }
 
 
   Widget _buildProfileCard() {
@@ -448,16 +502,28 @@ Widget build(BuildContext context) {
                 const SizedBox(height: 4),
                 InkWell(
                   onTap: () => _updateField('Edit Bio', 'bio'),
-                  child: Text(
-                    (_userData['bio']?.isNotEmpty ?? false) ? _userData['bio'] : 'Add a bio',
-                    style: TextStyle(
-                      color: (_userData['bio']?.isNotEmpty ?? false) ? Colors.black87 : Colors.blue,
-                      decoration: (_userData['bio']?.isNotEmpty ?? false)
-                          ? TextDecoration.none
-                          : TextDecoration.underline,
-                    ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          (_userData['bio']?.isNotEmpty ?? false) ? _userData['bio'] : 'Add a bio',
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                            // Removed underline entirely
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Icon(
+                        Icons.edit,
+                        size: 16,
+                        color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                      ),
+                    ],
                   ),
-                ),
+                )
               ],
             ),
           ),
@@ -516,10 +582,47 @@ Widget build(BuildContext context) {
       builder: (_) => _buildBottomSheetContent(
         title: 'Account Security',
         children: [
-          _buildMenuTile(Icons.email, 'Change Email', () => _updateField('Change Email', 'email', inputType: TextInputType.emailAddress)),
-          //_buildMenuTile(Icons.phone, 'Change Phone Number', _changePhone),
-          _buildMenuTile(Icons.lock, 'Change Password', () => _updateField('Change Password', 'password', isPassword: true)),
-          _buildMenuTile(Icons.person, 'Change Username', () => _updateField('Change Username', 'displayName')),
+          Card(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            elevation: 2,
+            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            child: _buildMenuTile(
+              Icons.email,
+              'Change Email',
+              () => _updateField('Change Email', 'email', inputType: TextInputType.emailAddress),
+            ),
+          ),
+          // Uncomment after adding change phone number feature
+          // Card(
+          //   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          //   elevation: 2,
+          //   margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+          //   child: _buildMenuTile(
+          //     Icons.phone,
+          //     'Change Phone Number',
+          //     _changePhone,
+          //   ),
+          // ),
+          Card(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            elevation: 2,
+            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            child: _buildMenuTile(
+              Icons.lock,
+              'Change Password',
+              () => _updateField('Change Password', 'password', isPassword: true),
+            ),
+          ),
+          Card(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            elevation: 2,
+            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            child: _buildMenuTile(
+              Icons.person,
+              'Change Username',
+              () => _updateField('Change Username', 'displayName'),
+            ),
+          ),
         ],
       ),
     );
@@ -528,46 +631,72 @@ Widget build(BuildContext context) {
   void _showHelpSupport() {
     showDialog(
       context: context,
-      builder: (_) => Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
+      builder: (_) => AlertDialog(
+        title: const Text('Help & Support'),
+        content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Help & Support', 
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            const Text('Contact us at 521K0008@student.tdtu.edu.vn'),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context), 
-              child: const Text('Close')),
+          children: const [
+            Text('If you have any issues or questions, feel free to contact us:'),
+            SizedBox(height: 8),
+            SelectableText('📧 521K0008@student.tdtu.edu.vn'),
           ],
         ),
+        actions: [
+          Align(
+            alignment: Alignment.centerRight,
+            child: ElevatedButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close'),
+            ),
+          ),
+        ],
       ),
     );
   }
 
   Widget _buildBottomSheetContent({required String title, required List<Widget> children}) {
-    return Padding(
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
-      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 16),
-        ...children,
-        const SizedBox(height: 16),
-        ElevatedButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
-      ]),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 16),
+          ...children,
+          const SizedBox(height: 24),
+          Align(
+            alignment: Alignment.centerRight,
+            child: ElevatedButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close'),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
   Widget _buildInfoRow(String label, String? value) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('$label: ', style: const TextStyle(fontWeight: FontWeight.bold)),
-          Flexible(child: Text(value ?? 'Not set')),
+          Text(
+            '$label: ',
+            style: const TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 16, // Match main text size
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value ?? 'Not set',
+              style: const TextStyle(fontSize: 16), // Match main text size
+            ),
+          ),
         ],
       ),
     );
