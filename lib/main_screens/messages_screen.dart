@@ -288,7 +288,7 @@ Widget build(BuildContext context) {
   return Scaffold(
     appBar: AppBar(
       elevation: 0,
-      title: const Text('Messages'),
+      title: const Text('Messages', style:TextStyle(fontWeight: FontWeight.bold)),
       actions: [
         IconButton(
           onPressed: () => _showNewChatDialog(context),
