@@ -384,95 +384,107 @@ void dispose() {
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        elevation: 0,
-        automaticallyImplyLeading: false,
-        actions: [
-          IconButton(icon: const Icon(Icons.settings), onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()))),
-        ],
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : ListView(
+Widget build(BuildContext context) {
+  return Scaffold(
+    appBar: AppBar(
+      elevation: 0,
+      backgroundColor: Colors.transparent,
+      automaticallyImplyLeading: false,
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.settings, color: Colors.black),
+          onPressed: () {
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const SettingsScreen()));
+          },
+        ),
+      ],
+    ),
+    body: _isLoading
+        ? const Center(child: CircularProgressIndicator())
+        : SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildProfileHeader(),
-                _buildMenuItems(),
+                _buildProfileCard(),
+                const SizedBox(height: 16),
+                _buildMenuCard(),
               ],
             ),
-    );
-  }
+          ),
+  );
+}
 
-  Widget _buildProfileHeader() {
-    return Padding(
-      padding: const EdgeInsets.all(16),
+
+  Widget _buildProfileCard() {
+  return Card(
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+    elevation: 4,
+    child: Padding(
+      padding: const EdgeInsets.all(20),
       child: Row(
         children: [
           GestureDetector(
             onTap: _updateProfilePicture,
             child: CircleAvatar(
-              radius: 30,
-              backgroundImage: (_userData['photoURL']?.isNotEmpty ?? false) ? NetworkImage(_userData['photoURL']) : null,
-              child: (_userData['photoURL']?.isEmpty ?? true) ? const Icon(Icons.person, size: 30) : null,
+              radius: 35,
+              backgroundImage: (_userData['photoURL']?.isNotEmpty ?? false)
+                  ? NetworkImage(_userData['photoURL'])
+                  : null,
+              child: (_userData['photoURL']?.isEmpty ?? true)
+                  ? const Icon(Icons.person, size: 35)
+                  : null,
             ),
           ),
           const SizedBox(width: 20),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(_userData['displayName'] ?? 'No Name', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 4),
-              InkWell(
-                onTap: () => _updateField('Edit Bio', 'bio'),
-                child: Text(
-                  (_userData['bio']?.isNotEmpty ?? false) ? _userData['bio'] : 'Add a bio',
-                  style: TextStyle(
-                    color: (_userData['bio']?.isNotEmpty ?? false) ? Colors.black87 : Colors.blue,
-                    decoration: (_userData['bio']?.isNotEmpty ?? false) ? TextDecoration.none : TextDecoration.underline,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _userData['displayName'] ?? 'No Name',
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 4),
+                InkWell(
+                  onTap: () => _updateField('Edit Bio', 'bio'),
+                  child: Text(
+                    (_userData['bio']?.isNotEmpty ?? false) ? _userData['bio'] : 'Add a bio',
+                    style: TextStyle(
+                      color: (_userData['bio']?.isNotEmpty ?? false) ? Colors.black87 : Colors.blue,
+                      decoration: (_userData['bio']?.isNotEmpty ?? false)
+                          ? TextDecoration.none
+                          : TextDecoration.underline,
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ],
       ),
-    );
-  }
+    ),
+  );
+}
 
-  Widget _buildMenuItems() {
-    return Column(
+  Widget _buildMenuCard() {
+  return Card(
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+    elevation: 4,
+    child: Column(
       children: [
-        ListTile(
-          leading: const Icon(Icons.person),
-          title: const Text('Personal Information'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => _showPersonalInfo(),
-        ),
-        const Divider(),
-        ListTile(
-          leading: const Icon(Icons.security),
-          title: const Text('Account Security'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => _showAccountSecurity(),
-        ),
-        const Divider(),
-        ListTile(
-          leading: const Icon(Icons.help),
-          title: const Text('Help & Support'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => _showHelpSupport(),
-        ),
-        const Divider(),
-        ListTile(
-          leading: const Icon(Icons.exit_to_app),
-          title: const Text('Log Out'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => _logout(),
-        ),
+        _buildMenuTile(Icons.person, 'Personal Information', _showPersonalInfo),
+        const Divider(height: 1),
+        _buildMenuTile(Icons.security, 'Account Security', _showAccountSecurity),
+        const Divider(height: 1),
+        _buildMenuTile(Icons.help_outline, 'Help & Support', _showHelpSupport),
+        const Divider(height: 1),
+        _buildMenuTile(Icons.logout, 'Log Out', _logout),
       ],
-    );
-  }
+    ),
+  );
+}
+
 
   ListTile _buildMenuTile(IconData icon, String title, Function() onTap) {
     return ListTile(
