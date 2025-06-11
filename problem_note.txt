@@ -1,4 +1,7 @@
 app crash when upload pic profile(fixed)
-work on emote/reply function
-work on call(phone auto end after ~20s)
+work on emote/reply function(halt)
+work on call(phone auto end after ~20s)(?fixed)
 work on connection
+when there is a call, still receive new call
+when delete conversation, still stay in conversation screen instead of return to menu
+need to add contact bar

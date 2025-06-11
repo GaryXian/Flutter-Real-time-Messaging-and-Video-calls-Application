@@ -1,5 +1,5 @@
 import 'dart:async';
-
+import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -492,35 +492,44 @@ void dispose() {
           ),
         ],
       ),
-      body:
-          _isLoading
-              ? const Center(child: CircularProgressIndicator())
-              : _friendsList.isEmpty
-              ? const Center(
-                child: Text('No friends yet. Search to add friends.'),
-              )
-              : ListView.builder(
-                itemCount: _friendsList.length,
-                itemBuilder: (context, index) {
-                  final friend = _friendsList[index];
-                  return ListTile(
-                    leading: buildUserAvatar(friend['photoURL']),
-                    title: Text(friend['displayName'] ?? 'Unknown'),
-                    subtitle: Text(friend['email'] ?? ''),
-                    trailing: IconButton(
-                      icon: const Icon(
-                        Icons.remove_circle_outline,
-                        color: Colors.red,
+body: _isLoading
+    ? const Center(child: CircularProgressIndicator())
+    : _friendsList.isEmpty
+        ? const Center(
+            child: Text('No friends yet. Search to add friends.'),
+          )
+        : ListView.builder(
+            itemCount: _friendsList.length,
+            itemBuilder: (context, index) {
+              final friend = _friendsList[index];
+
+              return Slidable(
+                key: Key(friend['uid']),
+                endActionPane: ActionPane(
+                  motion: const DrawerMotion(),
+                  extentRatio: 0.25,
+                  children: [
+                    SlidableAction(
+                      onPressed: (context) => _removeFriend(
+                        friend['uid'],
+                        friend['displayName'],
                       ),
-                      onPressed:
-                          () => _removeFriend(
-                            friend['uid'],
-                            friend['displayName'],
-                          ),
+                      backgroundColor: Colors.red,
+                      foregroundColor: Colors.white,
+                      icon: Icons.delete,
+                      label: 'Remove',
                     ),
-                  );
-                },
-              ),
+                  ],
+                ),
+                child: ListTile(
+                  leading: buildUserAvatar(friend['photoURL']),
+                  title: Text(friend['displayName'] ?? 'Unknown'),
+                  subtitle: Text(friend['email'] ?? ''),
+                ),
+              );
+            },
+          ),
+
     );
   }
 }
