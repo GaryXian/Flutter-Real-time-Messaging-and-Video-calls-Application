@@ -469,7 +469,8 @@ void dispose() {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Friends'),
+        title: const Text('Friends', style: TextStyle(fontWeight: FontWeight.bold)),
+        centerTitle: true,
         actions: [
           IconButton(
             icon: const Icon(Icons.person_add_alt_1),
@@ -484,52 +485,77 @@ void dispose() {
                 context: context,
                 delegate: FriendSearchDelegate(
                   onSearch: _searchUsers,
-                  onSendRequest:
-                      (userId) => _sendFriendRequest(userId, 'Unknown'),
+                  onSendRequest: (userId) => _sendFriendRequest(userId, 'Unknown'),
                 ),
               );
             },
           ),
         ],
       ),
-body: _isLoading
-    ? const Center(child: CircularProgressIndicator())
-    : _friendsList.isEmpty
-        ? const Center(
-            child: Text('No friends yet. Search to add friends.'),
-          )
-        : ListView.builder(
-            itemCount: _friendsList.length,
-            itemBuilder: (context, index) {
-              final friend = _friendsList[index];
-
-              return Slidable(
-                key: Key(friend['uid']),
-                endActionPane: ActionPane(
-                  motion: const DrawerMotion(),
-                  extentRatio: 0.25,
-                  children: [
-                    SlidableAction(
-                      onPressed: (context) => _removeFriend(
-                        friend['uid'],
-                        friend['displayName'],
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : _friendsList.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: const [
+                      Icon(Icons.group_off, size: 80, color: Colors.grey),
+                      SizedBox(height: 16),
+                      Text(
+                        'No friends yet',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                       ),
-                      backgroundColor: Colors.red,
-                      foregroundColor: Colors.white,
-                      icon: Icons.delete,
-                      label: 'Remove',
-                    ),
-                  ],
+                      SizedBox(height: 8),
+                      Text('Search and send friend requests to start connecting.'),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  itemCount: _friendsList.length,
+                  itemBuilder: (context, index) {
+                    final friend = _friendsList[index];
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: Slidable(
+                        key: Key(friend['uid']),
+                        endActionPane: ActionPane(
+                          motion: const DrawerMotion(),
+                          extentRatio: 0.25,
+                          children: [
+                            SlidableAction(
+                              onPressed: (context) => _removeFriend(
+                                friend['uid'],
+                                friend['displayName'],
+                              ),
+                              backgroundColor: Colors.red,
+                              foregroundColor: Colors.white,
+                              icon: Icons.delete,
+                              label: 'Remove',
+                            ),
+                          ],
+                        ),
+                        child: Material(
+                          elevation: 2,
+                          borderRadius: BorderRadius.circular(16),
+                          color: Theme.of(context).cardColor,
+                          child: ListTile(
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                            leading: buildUserAvatar(friend['photoURL']),
+                            title: Text(
+                              friend['displayName'] ?? 'Unknown',
+                              style: const TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                            subtitle: Text(friend['email'] ?? ''),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
                 ),
-                child: ListTile(
-                  leading: buildUserAvatar(friend['photoURL']),
-                  title: Text(friend['displayName'] ?? 'Unknown'),
-                  subtitle: Text(friend['email'] ?? ''),
-                ),
-              );
-            },
-          ),
-
     );
   }
 }
