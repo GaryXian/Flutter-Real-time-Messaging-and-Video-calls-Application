@@ -99,7 +99,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       await _createUserStructures(user, phone, displayName);
 
-      _showMessage("Registration Successful!");
+      _showMessage("Thanks for signing up. Welcome to our community. We are happy to have you on board.");
       if (!mounted) return;
       Navigator.pushReplacement(
         context,
