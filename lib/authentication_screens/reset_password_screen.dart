@@ -24,7 +24,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
         email: _emailController.text.trim(),
       );
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Password reset email sent!")),
+        const SnackBar(content: Text("Link sent. Please check your email.")),
       );
       Navigator.of(context).pop(); // Go back to login screen
     } on FirebaseAuthException catch (e) {
@@ -106,7 +106,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
                           ),
                         ),
                         onPressed: _resetPassword,
-                        child: const Text("Send Reset Link"),
+                        child: const Text("Receive Link"),
                       ),
               ),
             ],
