@@ -47,28 +47,30 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
     return Scaffold(
       appBar: AppBar(
         toolbarHeight: 80,
-        title: const Text(
-          "Reset Password",
-          style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-        ),
-        centerTitle: true,
         elevation: 0,
         backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
-        child: Center(
           child: Column(
             children: [
-              const SizedBox(height: 40),
-              const Icon(Icons.lock_reset, size: 80, color: Colors.blue),
+              const Icon(Icons.lock_reset, size: 100, color: Colors.blue),
               const SizedBox(height: 20),
-              const Text(
-                "Enter your email to receive a password reset link",
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 16),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    "Forgot Password?",
+                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                  ),
+                ],
               ),
-              const SizedBox(height: 30),
+              Row(
+                children: [
+                  const Text('Enter your email to receive a reset password link'),
+                ],
+              ),
+              const SizedBox(height: 30),             
               Form(
                 key: _formKey,
                 child: TextFormField(
@@ -88,7 +90,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
                   },
                 ),
               ),
-              const SizedBox(height: 30),
+              const SizedBox(height: 20),
               SizedBox(
                 width: double.infinity,
                 height: 55,
@@ -100,7 +102,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
                           foregroundColor: Colors.white,
                           textStyle: const TextStyle(
                             fontWeight: FontWeight.bold,
-                            fontSize: 16,
+                            fontSize: 18,
                           ),
                         ),
                         onPressed: _resetPassword,
@@ -109,7 +111,6 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
               ),
             ],
           ),
-        ),
       ),
     );
   }
