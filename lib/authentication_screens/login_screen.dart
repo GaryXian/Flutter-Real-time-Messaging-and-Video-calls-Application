@@ -28,18 +28,40 @@ class _LoginScreenState extends State<LoginScreen> {
       email: emailController.text.trim(),
       password: passwordController.text.trim(),
     );
+
     final user = userCredential.user;
     if (user != null) {
-      await _initializeUserData(user);  // <-- ADD THIS
+      await _initializeUserData(user);  // Initialize user data
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const HomePage()),
+      );
+    }
+  } on FirebaseAuthException catch (e) {
+    String message;
+    switch (e.code) {
+      case 'invalid-email':
+        message = 'Invalid email address.';
+        break;
+      case 'user-disabled':
+        message = 'This account has been banned.';
+        break;
+      case 'user-not-found':
+        message = 'Email address or password is incorrect. Please try again.';
+        break;
+      case 'wrong-password':
+        message = 'Email address or password is incorrect. Please try again.';
+        break;
+      default:
+        message = 'Email address or password is incorrect. Please try again.';
     }
 
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (_) => const HomePage()),
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
     );
   } catch (e) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("Login Failed: $e")),
+      SnackBar(content: Text("An unexpected error occurred: $e")),
     );
   }
 }
