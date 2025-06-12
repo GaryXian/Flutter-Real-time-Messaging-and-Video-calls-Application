@@ -106,7 +106,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         MaterialPageRoute(builder: (_) => const LoginScreen()),
       );
     } on FirebaseAuthException catch (e) {
-      _showMessage("Registration failed: ${e.message}", error: true);
+      _showMessage("Registration failed. Please try again.", error: true);
     } catch (e) {
       _showMessage("Error: $e", error: true);
     } finally {
