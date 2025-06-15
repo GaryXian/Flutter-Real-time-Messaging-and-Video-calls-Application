@@ -3,7 +3,7 @@ import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-
+import '../screens/chat_screen.dart';
 import '../widgets/helper.dart';
 
 class ContactsScreen extends StatefulWidget {
@@ -19,6 +19,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
   StreamSubscription? _friendsSubscription;
 
   List<Map<String, dynamic>> _friendsList = [];
+  List<Map<String, dynamic>> _availableUsers = [];
   bool _isLoading = false;
 
   @override
@@ -30,39 +31,32 @@ class _ContactsScreenState extends State<ContactsScreen> {
 
 
 Future<void> _loadFriends() async {
-  setState(() => _isLoading = true);
-  final currentUser = _auth.currentUser;
-  if (currentUser == null) return;
+  final currentUserId = _auth.currentUser?.uid;
+  if (currentUserId == null) return;
 
+  setState(() => _isLoading = true);
   try {
-    // Cancel any existing subscription
-    _friendsSubscription?.cancel();
-    
-    // Create new subscription to the friends stream
-    _friendsSubscription = _firestore
+    final friendsSnapshot = await _firestore
         .collection('users')
-        .doc(currentUser.uid)
+        .doc(currentUserId)
         .collection('friends')
-        .snapshots()
-        .listen((friendsSnapshot) {
-      final friends = friendsSnapshot.docs.map((doc) => doc.data()).toList();
-      if (mounted) {
-        setState(() => _friendsList = friends);
-      }
-    }, onError: (e) {
-      if (mounted) {
-        _showSnack('Failed to load friends: ${e.toString()}');
-      }
-    });
+        .get();
+
+    // Populate _friendsList with friends data
+    _friendsList = friendsSnapshot.docs.map((doc) => {
+      'uid': doc.id,
+      ...doc.data(),
+    }).toList();
+
+    // Initialize _availableUsers with all friends
+    _availableUsers = []; 
+
+    _availableUsers = List.from(_friendsList);
 
   } catch (e) {
-    if (mounted) {
-      _showSnack('Failed to load friends: ${e.toString()}');
-    }
+    _showSnack('Failed to load friends: ${e.toString()}');
   } finally {
-    if (mounted) {
-      setState(() => _isLoading = false);
-    }
+    setState(() => _isLoading = false);
   }
 }
 
@@ -79,16 +73,35 @@ void dispose() {
   }
 
   Future<void> _searchUsers(String query) async {
-    if (query.isEmpty) return;
-    try {
-      await _firestore
-          .collection('users')
-          .where('email', isEqualTo: query)
-          .get();
-    } catch (e) {
-      _showSnack('Search failed: ${e.toString()}');
-    }
+  if (query.isEmpty) {
+    setState(() {
+      _availableUsers = []; // Reset search results
+    });
+    return;
   }
+
+  try {
+    final usersSnapshot = await _firestore
+        .collection('users')
+        .where('displayName', isGreaterThanOrEqualTo: query)
+        .where('displayName', isLessThanOrEqualTo: '$query\uf8ff')
+        .get();
+
+    setState(() {
+      _availableUsers = usersSnapshot.docs.map((doc) {
+        final data = doc.data();
+        return {
+          'uid': doc.id,
+          'displayName': data['displayName'] ?? 'Unknown',
+          'email': data['email'] ?? '',
+          'photoURL': data['photoURL'] ?? '',
+        };
+      }).toList();
+    });
+  } catch (e) {
+    _showSnack('Search failed: ${e.toString()}');
+  }
+}
 
   String _generateRequestId(String senderId, String receiverId) {
     return '${senderId}_$receiverId';
@@ -197,7 +210,7 @@ void dispose() {
     }
   }
   
-  Future<void> _removeFriend(String friendId, String friendName) async {
+  Future<void> _removeFriend(String ContactId, String friendName) async {
     final currentUser = _auth.currentUser;
     if (currentUser == null) return;
 
@@ -244,14 +257,14 @@ void dispose() {
               .collection('users')
               .doc(currentUser.uid)
               .collection('friends')
-              .doc(friendId),
+              .doc(ContactId),
         );
 
         // Remove from friend's friends list
         batch.delete(
           _firestore
               .collection('users')
-              .doc(friendId)
+              .doc(ContactId)
               .collection('friends')
               .doc(currentUser.uid),
         );
@@ -465,6 +478,26 @@ void dispose() {
     }
   }
 
+String _generateConversationId(String ContactId) {
+  final currentUserId = _auth.currentUser!.uid;
+  return currentUserId.compareTo(ContactId) < 0 
+      ? '${currentUserId}_$ContactId' 
+      : '${ContactId}_$currentUserId';
+}
+
+Future<void> _blockFriend(String ContactId) async {
+  final currentUserId = _auth.currentUser!.uid;
+  
+  try {
+    await _firestore.collection('users').doc(currentUserId).update({
+      'blockedUsers': FieldValue.arrayUnion([ContactId]),
+    });
+    _showSnack('You have blocked this friend.');
+  } catch (e) {
+    _showSnack('Failed to block friend: ${e.toString()}');
+  }
+}
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -512,9 +545,10 @@ void dispose() {
                 )
               : ListView.builder(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  itemCount: _friendsList.length,
+                  itemCount: _availableUsers.length, // Use available users
                   itemBuilder: (context, index) {
-                    final friend = _friendsList[index];
+                    final friend = _availableUsers[index];  // Use available users
+
                     return Padding(
                       padding: const EdgeInsets.symmetric(vertical: 6),
                       child: Slidable(
@@ -524,10 +558,7 @@ void dispose() {
                           extentRatio: 0.25,
                           children: [
                             SlidableAction(
-                              onPressed: (context) => _removeFriend(
-                                friend['uid'],
-                                friend['displayName'],
-                              ),
+                              onPressed: (context) => _removeFriend(friend['uid'], friend['displayName']),
                               backgroundColor: Colors.red,
                               foregroundColor: Colors.white,
                               icon: Icons.delete,
@@ -535,20 +566,53 @@ void dispose() {
                             ),
                           ],
                         ),
-                        child: Material(
-                          elevation: 2,
-                          borderRadius: BorderRadius.circular(16),
-                          color: Theme.of(context).cardColor,
-                          child: ListTile(
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                            leading: buildUserAvatar(friend['photoURL']),
-                            title: Text(
-                              friend['displayName'] ?? 'Unknown',
-                              style: const TextStyle(fontWeight: FontWeight.w600),
-                            ),
-                            subtitle: Text(friend['email'] ?? ''),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16),
+                        child: GestureDetector(
+                          onTap: () {
+                            // Navigate to chat room
+                            Navigator.push(
+                            context,
+                              MaterialPageRoute(
+                                builder: (context) => ChatScreen(
+                                  conversationId: _generateConversationId(friend['uid']),
+                                  participants: [_auth.currentUser!.uid, friend['uid']],
+                                ),
+                              ),
+                            );
+                          },
+                          child: Material(
+                            elevation: 2,
+                            borderRadius: BorderRadius.circular(16),
+                            color: Theme.of(context).cardColor,
+                            child: ListTile(
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                              leading: buildUserAvatar(friend['photoURL']),
+                              title: Text(
+                                friend['displayName'] ?? 'Unknown',
+                                style: const TextStyle(fontWeight: FontWeight.w600),
+                              ),
+                              subtitle: Text(friend['email'] ?? ''),
+                              trailing: PopupMenuButton<String>(
+                                onSelected: (value) {
+                                  if (value == 'delete') {
+                                    _removeFriend(friend['uid'], friend['displayName']);
+                                  } else if (value == 'block') {
+                                    _blockFriend(friend['uid']);
+                                  }
+                                },
+                                itemBuilder: (context) => [
+                                  const PopupMenuItem(
+                                    value: 'delete',
+                                    child: Text('Delete Friend'),
+                                  ),
+                                  const PopupMenuItem(
+                                    value: 'block',
+                                    child: Text('Block Friend'),
+                                  ),
+                                ],
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
                             ),
                           ),
                         ),

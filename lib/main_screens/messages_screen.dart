@@ -279,139 +279,139 @@ Future<void> _loadMessages() async {
   
 
   @override
-Widget build(BuildContext context) {
-  final currentUserId = _auth.currentUser?.uid;
-  if (currentUserId == null) {
-    return const Scaffold(body: Center(child: Text('Please sign in')));
-  }
+  Widget build(BuildContext context) {
+    final currentUserId = _auth.currentUser?.uid;
+    if (currentUserId == null) {
+      return const Scaffold(body: Center(child: Text('Please sign in')));
+    }
 
-  return Scaffold(
-    appBar: AppBar(
-      elevation: 0,
-      title: const Text('Messages', style:TextStyle(fontWeight: FontWeight.bold)),
-      actions: [
-        IconButton(
-          onPressed: () => _showNewChatDialog(context),
-          icon: const Icon(Icons.add),
-        ),
-      ],
-    ),
-    body: StreamBuilder<QuerySnapshot>(
-      stream: _firestore
-          .collection('conversations')
-          .where('participants', arrayContains: currentUserId)
-          .orderBy('lastMessageTime', descending: true)
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
+    return Scaffold(
+      appBar: AppBar(
+        elevation: 0,
+        title: const Text('Messages', style:TextStyle(fontWeight: FontWeight.bold)),
+        actions: [
+          IconButton(
+            onPressed: () => _showNewChatDialog(context),
+            icon: const Icon(Icons.add),
+          ),
+        ],
+      ),
+      body: StreamBuilder<QuerySnapshot>(
+        stream: _firestore
+            .collection('conversations')
+            .where('participants', arrayContains: currentUserId)
+            .orderBy('lastMessageTime', descending: true)
+            .snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
 
-        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Text('No conversations yet'),
-                TextButton(
-                  onPressed: () => _showNewChatDialog(context),
-                  child: const Text('Start a new conversation'),
-                ),
-              ],
-            ),
-          );
-        }
-
-        final conversations = snapshot.data!.docs.map((doc) {
-          return {'id': doc.id, ...doc.data() as Map<String, dynamic>};
-        }).toList();
-
-        return ListView.builder(
-          itemCount: conversations.length,
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          itemBuilder: (ctx, index) {
-            final convo = conversations[index];
-            final participants = List<String>.from(convo['participants']);
-            final otherUserId = participants.firstWhere(
-              (id) => id != currentUserId,
-              orElse: () => '',
-            );
-
-            final userData = _getCachedUserInfo(otherUserId);
-
-            return Card(
-              margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
+          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text('No conversations yet'),
+                  TextButton(
+                    onPressed: () => _showNewChatDialog(context),
+                    child: const Text('Start a new conversation'),
+                  ),
+                ],
               ),
-              elevation: 2,
-              child: ListTile(
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                leading: CircleAvatar(
-                  radius: 24,
-                  backgroundImage:
-                      userData['photoURL']?.isNotEmpty == true
-                          ? NetworkImage(userData['photoURL'])
-                          : null,
-                  child: userData['photoURL']?.isEmpty == true
-                      ? const Icon(Icons.person)
-                      : null,
+            );
+          }
+
+          final conversations = snapshot.data!.docs.map((doc) {
+            return {'id': doc.id, ...doc.data() as Map<String, dynamic>};
+          }).toList();
+
+          return ListView.builder(
+            itemCount: conversations.length,
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            itemBuilder: (ctx, index) {
+              final convo = conversations[index];
+              final participants = List<String>.from(convo['participants']);
+              final otherUserId = participants.firstWhere(
+                (id) => id != currentUserId,
+                orElse: () => '',
+              );
+
+              final userData = _getCachedUserInfo(otherUserId);
+
+              return Card(
+                margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
                 ),
-                title: Text(
-                  userData['displayName'] ?? 'Unknown',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                ),
-                subtitle: Text(
-                  (convo['lastMessage'] as String?)?.isNotEmpty == true
-                      ? convo['lastMessage']
-                      : 'No messages yet',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                trailing: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      _formatTimestamp(convo['lastMessageTime'] as Timestamp?),
-                      style: Theme.of(context).textTheme.labelSmall,
-                    ),
-                    const SizedBox(height: 6),
-                    if ((convo['unreadCount']?[currentUserId] ?? 0) > 0)
-                      Container(
-                        padding: const EdgeInsets.all(6),
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.primary,
-                          shape: BoxShape.circle,
+                elevation: 2,
+                child: ListTile(
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  leading: CircleAvatar(
+                    radius: 24,
+                    backgroundImage:
+                        userData['photoURL']?.isNotEmpty == true
+                            ? NetworkImage(userData['photoURL'])
+                            : null,
+                    child: userData['photoURL']?.isEmpty == true
+                        ? const Icon(Icons.person)
+                        : null,
+                  ),
+                  title: Text(
+                    userData['displayName'] ?? 'Unknown',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
                         ),
-                        child: Text(
-                          convo['unreadCount'][currentUserId].toString(),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
+                  ),
+                  subtitle: Text(
+                    (convo['lastMessage'] as String?)?.isNotEmpty == true
+                        ? convo['lastMessage']
+                        : 'No messages yet',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  trailing: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        _formatTimestamp(convo['lastMessageTime'] as Timestamp?),
+                        style: Theme.of(context).textTheme.labelSmall,
+                      ),
+                      const SizedBox(height: 6),
+                      if ((convo['unreadCount']?[currentUserId] ?? 0) > 0)
+                        Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.primary,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Text(
+                            convo['unreadCount'][currentUserId].toString(),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                            ),
                           ),
                         ),
-                      ),
-                  ],
+                    ],
+                  ),
+                  onTap: () => _openChatRoom(
+                    context,
+                    otherUserId,
+                    userData['displayName'] ?? 'Unknown',
+                    convo['id'],
+                  ),
                 ),
-                onTap: () => _openChatRoom(
-                  context,
-                  otherUserId,
-                  userData['displayName'] ?? 'Unknown',
-                  convo['id'],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    ),
-  );
-}
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
 
 
   String _formatTimestamp(Timestamp? timestamp) {
