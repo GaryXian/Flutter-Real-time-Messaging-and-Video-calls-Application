@@ -216,7 +216,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 obscureText: true,
                 validator: (value) {
                   if (value == null || value.isEmpty) return 'Enter a password';
-                  if (value.length < 6) return 'Password must be at least 6 characters';
+                  if (value.length < 6) return 'Password must have at least 6 characters';
+                  if (value.length > 16) return 'Password must not be longer than 16 characters';
                   return null;
                 },
               ),
@@ -238,6 +239,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   if (value != passwordController.text) {
                     return 'Passwords do not match';
                   }
+                  if (value.length < 6) return 'Password must have at least 6 characters';
+                  if (value.length > 16) return 'Password must not be longer than 16 characters';
                   return null;
                 },
               ),
