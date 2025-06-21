@@ -4,6 +4,8 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'dart:async';
+import 'dual_video_layout.dart';
+import '../signaling.dart';
 
 class CallScreen extends StatefulWidget {
   final String conversationId;
@@ -26,6 +28,7 @@ class CallScreen extends StatefulWidget {
 class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
   final _localRenderer = RTCVideoRenderer();
   final _remoteRenderer = RTCVideoRenderer();
+  final _signaling = DirectSignaling(host: 'ws://10.0.2.2:8080');
 
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
@@ -50,7 +53,7 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
 
   String _callStatus = 'Initializing...';
   String? _peerName;
-
+  RTCSessionDescription? _remoteOffer;
   Timer? _callTimer;
   Duration _callDuration = Duration.zero;
 
@@ -159,15 +162,39 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _initRenderers() async {
-    if (!mounted) return;
+    Future<void> _initRenderers() async {
+    await _localRenderer.initialize();
+    await _remoteRenderer.initialize();
+    await _signaling.initalize(
+        onLocalStreamAvailable: _localStreamAvailable,
+        onRemoteStreamAvailable: _remoteStreamAvailable,
+        onConnectionState: _onConnectionState);
+  }
 
-    try {
-      await _localRenderer.initialize();
-      await _remoteRenderer.initialize();
-    } catch (e) {
-      throw Exception('Failed to initialize renderers: $e');
+  void _localStreamAvailable(MediaStream stream) // display local stream
+  {
+    setState(() {
+      _localRenderer.srcObject = stream;
+    });
+  }
+
+  void _remoteStreamAvailable(MediaStream stream) // display remote stream
+  {
+    setState(() {
+      _remoteRenderer.srcObject = stream;
+    });
+  }
+
+  void _onConnectionState(RTCPeerConnectionState state) {
+    print(state);
+    if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected ||
+        state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
+        state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
+      _isConnected = true;
     }
+    setState(() {
+      _callStatus = state.toString();
+    });
   }
 
   Future<void> _initCallFlow() async {
@@ -177,6 +204,7 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
     if (!hasPermissions || !mounted) return;
 
     if (_isCaller) {
+      // Caller: Create call document first
       await _firestore.collection('calls').doc(widget.conversationId).set({
         'callerId': widget.callerId,
         'receiverId': widget.receiverId,
@@ -192,8 +220,39 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
       await _initMediaDevices();
       if (!mounted) return;
 
-      await _initPeerConnection();
-      if (!mounted) return;
+      // IMPORTANT: Initialize signaling BEFORE peer connection
+      await _signaling.initalize(
+        onLocalStreamAvailable: (stream) {
+          if (mounted) {
+            setState(() {
+              _localRenderer.srcObject = stream;
+              _localStream = stream; // Store the stream reference
+            });
+          }
+        },
+        onRemoteStreamAvailable: (stream) {
+          if (mounted) {
+            setState(() {
+              _remoteRenderer.srcObject = stream;
+              _isConnected = true;
+            });
+          }
+        },
+        onConnectionState: (state) {
+          debugPrint('Connection state changed: $state');
+          if (mounted) {
+            setState(() {
+              _callStatus = state.toString();
+            });
+          }
+        },
+      );
+
+      // Get peer connection from signaling
+      _peerConnection = _signaling.localPeer;
+
+      // Set up additional peer connection handlers
+      _setupPeerConnectionHandlers();
 
       if (_isCaller) {
         if (mounted) {
@@ -208,14 +267,51 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
             _callStatus = 'Incoming call...';
           });
         }
-        await _listenForOffer();
-        if (mounted) {
-          await _acceptCall();
-        }
+        await _acceptCall();
       }
     } catch (e) {
       _handleError('Failed to establish call: $e');
     }
+  }
+
+  // New method to set up additional peer connection handlers
+  void _setupPeerConnectionHandlers() {
+    if (_peerConnection == null) return;
+
+    _peerConnection?.onIceCandidate = (candidate) async {
+      if (candidate.candidate != null && !_isCallEnded) {
+        await _firestore
+            .collection('calls')
+            .doc(widget.conversationId)
+            .collection('iceCandidates')
+            .add({
+              'candidate': candidate.candidate,
+              'sdpMid': candidate.sdpMid,
+              'sdpMLineIndex': candidate.sdpMLineIndex,
+              'fromCaller': _isCaller,
+            });
+      }
+    };
+
+    _peerConnection?.onConnectionState = (state) {
+      debugPrint('Connection state changed: $state');
+      if (_shouldRestartIce(state)) {
+        _attemptIceRestart();
+      }
+    };
+
+    _peerConnection?.onIceConnectionState = (state) {
+      debugPrint('ICE connection state changed: $state');
+      if (state == RTCIceConnectionState.RTCIceConnectionStateConnected &&
+          mounted) {
+        setState(() {
+          _isConnected = true;
+          _callStatus = 'Connected';
+        });
+      }
+    };
+
+    _listenForIceCandidates();
   }
 
   void _startCallStatusListener() {
@@ -499,12 +595,11 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
     if (!mounted || _isCallEnded || _peerConnection == null) return;
 
     try {
-      // Use proper constraints format for createOffer
       final offerOptions = {
         'offerToReceiveAudio': 1,
         'offerToReceiveVideo': _isVideoCall ? 1 : 0,
-        'iceRestart': false, // Set to true if you want to enable ICE restart
-        'voiceActivityDetection': true, // Enable VAD
+        'iceRestart': false,
+        'voiceActivityDetection': true,
       };
 
       final offer = await _peerConnection!.createOffer(offerOptions);
@@ -513,17 +608,48 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
       await _peerConnection!.setLocalDescription(offer);
       if (_isCallEnded || !mounted) return;
 
-      await _firestore.collection('calls').doc(widget.conversationId).update({
-        'type': 'offer',
-        'sdp': offer.sdp,
-        'isVideoCall': _isVideoCall,
-        'timestamp': FieldValue.serverTimestamp(),
-      });
+      // Use the signaling call method
+      await _signaling.call(
+        conversationId: widget.conversationId,
+        callerId: widget.callerId,
+        receiverId: widget.receiverId,
+        isVideoCall: _isVideoCall,
+        offer: offer,
+      );
+
       _listenForAnswerWithTimeout();
     } catch (e) {
       _handleError('Error creating offer: $e');
     }
   }
+
+  // Modified _acceptCall method
+  Future<void> _acceptCall() async {
+    if (!mounted || _isCallEnded || _peerConnection == null) return;
+
+    try {
+      setState(() {
+        _callStatus = 'Connecting...';
+      });
+
+      // Wait for offer to arrive via WebSocket (handled by DirectSignaling)
+      // The DirectSignaling class will handle the offer and create answer automatically
+
+      if (mounted) {
+        setState(() {
+          _isCallAccepted = true;
+        });
+      }
+
+      debugPrint('Call accepted successfully');
+    } catch (e) {
+      debugPrint('Error in _acceptCall: $e');
+      _handleError('Failed to accept call: $e');
+    }
+  }
+
+  // Remove redundant _initPeerConnection since it's handled by DirectSignaling
+  // Keep other methods as they are...
 
   void _listenForAnswerWithTimeout() {
     Timer? answerTimeout = Timer(Duration(seconds: 30), () {
@@ -555,70 +681,6 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
             }
           }
         });
-  }
-
-  Future<void> _listenForOffer() async {
-    if (!mounted || _isCallEnded || _peerConnection == null) return;
-
-    try {
-      final doc =
-          await _firestore.collection('calls').doc(widget.conversationId).get();
-      if (!mounted || _isCallEnded) return;
-
-      if (!doc.exists || doc.data() == null) {
-        _handleError('Call offer not found');
-        return;
-      }
-
-      final data = doc.data()!;
-      if (data['type'] != 'offer' || data['sdp'] == null) {
-        _handleError('Invalid call offer');
-        return;
-      }
-
-      final offer = RTCSessionDescription(data['sdp'], data['type']);
-      await _peerConnection?.setRemoteDescription(offer);
-    } catch (e) {
-      _handleError('Error processing offer: $e');
-    }
-  }
-
-  Future<void> _acceptCall() async {
-    if (!mounted || _isCallEnded || _peerConnection == null) return;
-
-    try {
-      setState(() {
-        _callStatus = 'Connecting...';
-      });
-
-      // Update participant heartbeats when accepting call
-      final currentUserId = _auth.currentUser?.uid;
-      if (currentUserId != null) {
-        await _firestore.collection('calls').doc(widget.conversationId).update({
-          'participantHeartbeats.$currentUserId': FieldValue.serverTimestamp(),
-        });
-      }
-
-      final answer = await _peerConnection!.createAnswer();
-      if (!mounted || _isCallEnded) return;
-
-      await _peerConnection!.setLocalDescription(answer);
-      if (!mounted || _isCallEnded) return;
-
-      await _firestore.collection('calls').doc(widget.conversationId).update({
-        'type': 'answer',
-        'sdp': answer.sdp,
-        'status': 'accepted',
-      });
-
-      if (mounted) {
-        setState(() {
-          _isCallAccepted = true;
-        });
-      }
-    } catch (e) {
-      _handleError('Error accepting call: $e');
-    }
   }
 
   void _listenForIceCandidates() {
@@ -807,6 +869,7 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
     _remoteRenderer.dispose();
     _localStream?.dispose();
     _peerConnection?.close();
+    _signaling.channel.sink.close();
     super.dispose();
   }
 
@@ -832,36 +895,22 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
             children: [
               // Video Streams - use _isVideoCall instead of widget.isVideoCall
               if (_isVideoCall) ...[
-                // Remote video (full screen)
-                if (_isConnected && _remoteRenderer.srcObject != null)
+                if (_localRenderer.srcObject != null &&
+                    _remoteRenderer.srcObject != null)
+                  Positioned.fill(
+                    child: DualVideoLayout(
+                      local: _localRenderer,
+                      remote: _remoteRenderer,
+                    ),
+                  )
+                else if (_localRenderer.srcObject != null)
+                  // Show only local video when remote is not available
                   Positioned.fill(
                     child: RTCVideoView(
-                      _remoteRenderer,
+                      _localRenderer,
+                      mirror: true,
                       objectFit:
                           RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
-                    ),
-                  ),
-                // Local video (picture-in-picture)
-                if (_localRenderer.srcObject != null)
-                  Positioned(
-                    right: 20,
-                    top: 20,
-                    width: 100,
-                    height: 150,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Colors.white, width: 2),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: RTCVideoView(
-                          _localRenderer,
-                          mirror: true,
-                          objectFit:
-                              RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
-                        ),
-                      ),
                     ),
                   ),
               ] else ...[
