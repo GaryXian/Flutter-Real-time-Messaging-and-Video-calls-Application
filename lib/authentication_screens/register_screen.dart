@@ -198,7 +198,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     return 'Please enter a username name';
                   }
                   if (value.length < 3) {
-                    return 'Name must be at least 3 characters';
+                    return 'Username must have at least 3 characters';
                   }
                   return null;
                 },
