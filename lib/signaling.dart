@@ -104,10 +104,6 @@ class DirectSignaling {
       localPeer.onConnectionState = onConnectionState;
     }
 
-    // Handle incoming stream
-    localPeer.onAddStream = (MediaStream stream) {
-      onRemoteStreamAvailable?.call(stream);
-    };
 
     // Handle incoming tracks
     localPeer.onTrack = (RTCTrackEvent event) {

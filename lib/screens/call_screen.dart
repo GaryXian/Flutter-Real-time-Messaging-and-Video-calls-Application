@@ -27,8 +27,8 @@ class CallScreen extends StatefulWidget {
 
 class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
   final _localRenderer = RTCVideoRenderer();
-  final _remoteRenderer = RTCVideoRenderer();
-  final _signaling = DirectSignaling(host: 'ws://10.0.2.2:8080');
+  late RTCVideoRenderer _remoteRenderer;
+  late DirectSignaling _signaling;
 
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
@@ -61,6 +61,11 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _remoteRenderer = RTCVideoRenderer();
+    _remoteRenderer.initialize();
+
+    _signaling = DirectSignaling(host: 'ws://10.0.2.2:8080');
+    _signaling.initalize(onRemoteStreamAvailable: _handleRemoteStream);
 
     _isVideoCall = widget.isVideoCall;
 
@@ -162,13 +167,14 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
     }
   }
 
-    Future<void> _initRenderers() async {
+  Future<void> _initRenderers() async {
     await _localRenderer.initialize();
     await _remoteRenderer.initialize();
     await _signaling.initalize(
-        onLocalStreamAvailable: _localStreamAvailable,
-        onRemoteStreamAvailable: _remoteStreamAvailable,
-        onConnectionState: _onConnectionState);
+      onLocalStreamAvailable: _localStreamAvailable,
+      onRemoteStreamAvailable: _remoteStreamAvailable,
+      onConnectionState: _onConnectionState,
+    );
   }
 
   void _localStreamAvailable(MediaStream stream) // display local stream
@@ -183,6 +189,15 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
     setState(() {
       _remoteRenderer.srcObject = stream;
     });
+  }
+
+  void _handleRemoteStream(MediaStream stream) {
+    if (mounted && _remoteRenderer.textureId != null) {
+      // ensure initialized
+      setState(() {
+        _remoteRenderer.srcObject = stream;
+      });
+    }
   }
 
   void _onConnectionState(RTCPeerConnectionState state) {
@@ -463,91 +478,6 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _initPeerConnection() async {
-    if (!mounted) return;
-
-    final config = {
-      'iceServers': [
-        {'urls': 'stun:stun.l.google.com:19302'},
-        {'urls': 'stun:stun1.l.google.com:19302'},
-        {'urls': 'stun:stun2.l.google.com:19302'},
-        {
-          'urls': 'turn:openrelay.metered.ca:80',
-          'username': 'openrelayproject',
-          'credential': 'openrelayproject',
-        },
-        {
-          'urls': 'turn:openrelay.metered.ca:443',
-          'username': 'openrelayproject',
-          'credential': 'openrelayproject',
-        },
-      ],
-      'iceTransportPolicy': 'all',
-      'bundlePolicy': 'max-bundle',
-      'rtcpMuxPolicy': 'require',
-    };
-
-    try {
-      _peerConnection = await createPeerConnection(config);
-
-      // Add local stream tracks
-      if (_localStream != null) {
-        for (var track in _localStream!.getTracks()) {
-          await _peerConnection?.addTrack(track, _localStream!);
-        }
-      }
-
-      _peerConnection?.onTrack = (event) {
-        if (event.streams.isNotEmpty && mounted) {
-          setState(() {
-            _remoteRenderer.srcObject = event.streams[0];
-            _isConnected = true;
-          });
-        }
-      };
-
-      _peerConnection?.onIceCandidate = (candidate) async {
-        if (candidate.candidate != null && !_isCallEnded) {
-          await _firestore
-              .collection('calls')
-              .doc(widget.conversationId)
-              .collection('iceCandidates')
-              .add({
-                'candidate': candidate.candidate,
-                'sdpMid': candidate.sdpMid,
-                'sdpMLineIndex': candidate.sdpMLineIndex,
-                'fromCaller': _isCaller,
-              });
-        }
-      };
-
-      _peerConnection?.onConnectionState = (state) {
-        debugPrint('Connection state changed: $state');
-        if (_shouldRestartIce(state)) {
-          _attemptIceRestart();
-        }
-      };
-
-      _peerConnection?.onIceConnectionState = (state) {
-        debugPrint('ICE connection state changed: $state');
-        if (state == RTCIceConnectionState.RTCIceConnectionStateConnected &&
-            mounted) {
-          setState(() {
-            _isConnected = true;
-            _callStatus = 'Connected';
-          });
-        } else if (_shouldRestartIce(state)) {
-          _attemptIceRestart();
-        }
-      };
-
-      _listenForIceCandidates();
-    } catch (e) {
-      debugPrint('Error initializing peer connection: $e');
-      _handleError('Failed to establish peer connection.');
-    }
-  }
-
   bool _shouldRestartIce(dynamic state) {
     return (state == RTCIceConnectionState.RTCIceConnectionStateFailed ||
             state == RTCIceConnectionState.RTCIceConnectionStateDisconnected ||
@@ -821,12 +751,25 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
     }
   }
 
-  void _switchCamera() async {
-    if (_localStream != null && _isVideoCall) {
-      final videoTrack = _localStream!.getVideoTracks().firstOrNull;
-      if (videoTrack != null) {
-        await Helper.switchCamera(videoTrack);
+  bool _isFrontCamera = true;
+
+  // Update your _switchCamera method
+  Future<void> _switchCamera() async {
+    try {
+      if (_localRenderer.srcObject != null) {
+        final videoTracks = _localRenderer.srcObject!.getVideoTracks();
+        if (videoTracks.isNotEmpty) {
+          final videoTrack = videoTracks.first;
+          await videoTrack.switchCamera();
+
+          // Update the front camera state
+          setState(() {
+            _isFrontCamera = !_isFrontCamera;
+          });
+        }
       }
+    } catch (e) {
+      print('Error switching camera: $e');
     }
   }
 
@@ -866,9 +809,11 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
     _answerSubscription?.cancel();
     _connectionMonitorSubscription?.cancel();
     _localRenderer.dispose();
+    _remoteRenderer.srcObject = null; // Clear remote renderer
     _remoteRenderer.dispose();
     _localStream?.dispose();
     _peerConnection?.close();
+    _signaling.close();
     _signaling.channel.sink.close();
     super.dispose();
   }
@@ -901,6 +846,8 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
                     child: DualVideoLayout(
                       local: _localRenderer,
                       remote: _remoteRenderer,
+                      isFrontCamera: _isFrontCamera,
+                      onCameraSwitch: _switchCamera,
                     ),
                   )
                 else if (_localRenderer.srcObject != null)
@@ -908,13 +855,13 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
                   Positioned.fill(
                     child: RTCVideoView(
                       _localRenderer,
-                      mirror: true,
+                      mirror: _isFrontCamera, // Use the state variable
                       objectFit:
                           RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
                     ),
                   ),
               ] else ...[
-                // Audio call UI
+                // Audio call UI (unchanged)
                 Positioned.fill(
                   child: Container(
                     color: Colors.blueGrey.shade900,
@@ -1050,8 +997,10 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
                             ),
                           ),
 
-                          // Camera switch (only for video calls)
-                          if (_isVideoCall)
+                          // Remove the duplicate camera switch button
+                          // The DualVideoLayout now handles camera switching
+                          // when both local and remote videos are available
+                          if (_isVideoCall && _remoteRenderer.srcObject == null)
                             CircleAvatar(
                               radius: 25,
                               backgroundColor: Colors.white.withOpacity(0.3),
