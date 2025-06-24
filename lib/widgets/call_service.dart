@@ -58,91 +58,67 @@ static void _cancelCallTimeout() {
 
 
   static void startGlobalListening(BuildContext context, String currentUserId) {
-    // Cancel existing subscription if any
     _globalSubscription?.cancel();
 
-    // Set up new subscription
     _globalSubscription = FirebaseFirestore.instance
         .collection('calls')
         .where('receiverId', isEqualTo: currentUserId)
-        .snapshots() // Listen to all incoming calls
+        .snapshots()
         .listen(
           (querySnapshot) async {
-            // Check for any active calls
-            bool hasActiveCall = false;
-            for (var doc in querySnapshot.docs) {
-              final data = doc.data();
-              final callStatus = data['status'] ?? 'ended';
-              if (callStatus == 'ringing' || callStatus == 'accepted') {
-                hasActiveCall = true;
-                break;
-              }
-            }
+            // CRITICAL: Process document changes instead of current state
+            for (var change in querySnapshot.docChanges) {
+              if (change.type == DocumentChangeType.added || 
+                  change.type == DocumentChangeType.modified) {
+                
+                final doc = change.doc;
+                final data = doc.data()!;
+                final callerId = data['callerId'];
+                final conversationId = doc.id;
+                final isVideoCall = data['isVideoCall'] ?? false;
+                final callStatus = data['status'] ?? 'ended';
 
-            // If there are no active calls, ensure we're in a clean state
-            if (!hasActiveCall && _isDialogShowing) {
-              _lastCallEndTime = DateTime.now();
-              _dismissCurrentCallDialog(context);
-            }
+                // Skip if user is the caller
+                if (callerId == currentUserId) continue;
 
-            // Process each call document
-            for (var doc in querySnapshot.docs) {
-              final data = doc.data();
-              final callerId = data['callerId'];
-              final conversationId = doc.id;
-              final isVideoCall = data['isVideoCall'] ?? false;
-              final callStatus = data['status'] ?? 'ended';
+                // CRITICAL: Only clean up if this specific call ended
+                if ((callStatus == 'cancelled' || callStatus == 'ended' || callStatus == 'declined') 
+                    && _currentCallId == conversationId) {
+                  _handledCallIds.remove(conversationId);
+                  if (_isDialogShowing) {
+                    _lastCallEndTime = DateTime.now();
+                    _dismissCurrentCallDialog(context);
+                  }
+                  continue;
+                }
 
-              // Skip if user is the caller
-              if (callerId == currentUserId) continue;
-
-              // Reset handled status when call is cancelled or ended
-              if (callStatus == 'cancelled' ||
-                  callStatus == 'ended' ||
-                  callStatus == 'declined') {
+                // CRITICAL: Remove the delay logic that blocks immediate calls
+                if (callStatus == 'ringing' &&
+                    !_handledCallIds.contains(conversationId) &&
+                    !_isDialogShowing) {
+                  
+                  await _showIncomingCallDialog(
+                    context,
+                    conversationId,
+                    callerId,
+                    currentUserId,
+                    isVideoCall,
+                  );
+                }
+              } else if (change.type == DocumentChangeType.removed) {
+                // CRITICAL: Clean up when document is deleted
+                final conversationId = change.doc.id;
                 _handledCallIds.remove(conversationId);
-                if (_isDialogShowing && _currentCallId == conversationId) {
-                  _lastCallEndTime = DateTime.now();
+                if (_currentCallId == conversationId && _isDialogShowing) {
                   _dismissCurrentCallDialog(context);
                 }
-                continue;
-              }
-
-              // Process only ringing calls that haven't been handled
-              if (callStatus == 'ringing' &&
-                  !_handledCallIds.contains(conversationId) &&
-                  !_isDialogShowing) {
-                // Don't process new calls immediately after ending another call
-                // This prevents UI glitches and race conditions
-                if (_lastCallEndTime != null) {
-                  final timeSinceLastCall = DateTime.now().difference(
-                    _lastCallEndTime!,
-                  );
-                  if (timeSinceLastCall.inSeconds < 2) {
-                    // Wait a bit before processing the next call
-                    await Future.delayed(
-                      Duration(seconds: 2 - timeSinceLastCall.inSeconds),
-                    );
-                  }
-                }
-
-                await _showIncomingCallDialog(
-                  context,
-                  conversationId,
-                  callerId,
-                  currentUserId,
-                  isVideoCall,
-                );
               }
             }
           },
           onError: (error) {
             print('Global call listener error: $error');
-            // Reset state on error
             resetServiceState();
-
-            // Attempt to restart listening after error
-            Future.delayed(const Duration(seconds: 5), () {
+            Future.delayed(const Duration(seconds: 2), () {
               if (context.mounted) {
                 startGlobalListening(context, currentUserId);
               }
@@ -150,6 +126,7 @@ static void _cancelCallTimeout() {
           },
         );
   }
+
 
   static Future<void> _playRingtone() async {
     try {
@@ -253,7 +230,6 @@ static void _cancelCallTimeout() {
     _isDialogShowing = true;
     _currentCallId = conversationId;
     _handledCallIds.add(conversationId); // Mark this call as handled
-    await Future.delayed(Duration(milliseconds: 500));
     try {
       // Get caller information
       final userDoc =
@@ -491,7 +467,6 @@ static void _cancelCallTimeout() {
     _activeCallSubscription?.cancel();
     _activeCallSubscription = null;
     _isDialogShowing = false;
-    _lastCallEndTime = DateTime.now();
     _cancelCallTimeout();
   }
 

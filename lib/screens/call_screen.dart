@@ -665,10 +665,7 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
       });
     }
 
-    // Cancel all timers
     _callTimer?.cancel();
-
-    // Cancel all subscriptions
     _callStatusSubscription?.cancel();
     _iceCandidatesSubscription?.cancel();
     _answerSubscription?.cancel();
@@ -699,7 +696,7 @@ class _CallScreenState extends State<CallScreen> with WidgetsBindingObserver {
     }
 
     // Clean up Firestore data after a delay
-    Future.delayed(const Duration(seconds: 3), () async {
+    Future.delayed(const Duration(milliseconds: 500), () async {
       try {
         final candidatesSnapshot =
             await _firestore
