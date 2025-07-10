@@ -9,11 +9,13 @@ import 'message_service.dart';
 class MessageInput extends StatefulWidget {
   final String conversationId;
   final List<String> participants;
+  final VoidCallback onSend;
 
   const MessageInput({
     super.key,
     required this.conversationId,
-    required this.participants, required Null Function() onSend,
+    required this.participants, 
+    required this.onSend,
   });
 
   @override
@@ -27,7 +29,6 @@ class ReplyData {
   ReplyData({required this.messageId, required this.content, required this.senderId});
 }
 
-
 class _MessageInputState extends State<MessageInput> {
   final _controller = TextEditingController();
   final _messageService = MessageService();
@@ -36,6 +37,10 @@ class _MessageInputState extends State<MessageInput> {
   Future<void> _sendTextMessage() async {
     final content = _controller.text.trim();
     if (content.isEmpty) return;
+    
+    if (widget.onSend != null) {
+      widget.onSend();
+    }
 
     setState(() => _isSending = true);
     await _messageService.sendMessage(
@@ -76,8 +81,6 @@ class _MessageInputState extends State<MessageInput> {
       setState(() => _isSending = false);
     }
   }
-
-
 
   Future<void> _pickFile() async {
     try {

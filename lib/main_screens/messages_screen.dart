@@ -5,9 +5,7 @@ import 'package:intl/intl.dart';
 import '../screens/chat_screen.dart';
 
 class MessagesScreen extends StatefulWidget {
-
   const MessagesScreen({super.key});
-  
 
   @override
   State<MessagesScreen> createState() => _MessagesScreenState();
@@ -21,11 +19,11 @@ class _MessagesScreenState extends State<MessagesScreen> {
   final Map<String, Map<String, dynamic>> _userCache = {};
   List<Map<String, dynamic>> _availableUsers = [];
   bool _isLoadingUsers = false;
-    bool _isLoading=false;
-    bool _hasMore=true;
-    int _messagesPerPage = 20;
-    DocumentSnapshot? _lastDocument;
-    List<QueryDocumentSnapshot> _messages = [];
+  bool _isLoading = false;
+  bool _hasMore = true;
+  int _messagesPerPage = 20;
+  DocumentSnapshot? _lastDocument;
+  List<QueryDocumentSnapshot> _messages = [];
 
   String _generateConversationId(String userId1, String userId2) {
     // Check if trying to create a self-conversation
@@ -37,7 +35,6 @@ class _MessagesScreenState extends State<MessagesScreen> {
         ? '${userId1}_$userId2'
         : '${userId2}_$userId1';
   }
-  
 
   Future<void> _startNewConversation(
     String contactId,
@@ -82,10 +79,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
           'lastMessageType': 'text',
           'lastMessageTime': FieldValue.serverTimestamp(),
           'lastMessageId': '',
-          'unreadCount': {
-            currentUser.uid: 0,
-            contactId: 0,
-          },
+          'unreadCount': {currentUser.uid: 0, contactId: 0},
           'type': 'private',
           'updatedAt': FieldValue.serverTimestamp(),
         });
@@ -130,7 +124,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
         return;
       }
 
-      // Reset unreadCount for current user
+      // Reset unreadCount for current user when opening chat
       await _firestore.collection('conversations').doc(conversationId).update({
         'unreadCount.$currentUserId': 0,
       });
@@ -152,40 +146,64 @@ class _MessagesScreenState extends State<MessagesScreen> {
       );
     }
   }
-  
-Future<void> _loadMessages() async {
-  // Prevent re-entrance if already loading or no more messages
-  if (_isLoading || !_hasMore) return;
 
-  setState(() => _isLoading = true);
+  Future<void> _loadMessages() async {
+    // Prevent re-entrance if already loading or no more messages
+    if (_isLoading || !_hasMore) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      Query query = _firestore
+          .collection('conversations')
+          .doc('conversationId')
+          .collection('messages')
+          .orderBy('timestamp', descending: true)
+          .limit(_messagesPerPage);
+
+      if (_lastDocument != null) {
+        query = query.startAfterDocument(_lastDocument!);
+      }
+
+      final snapshot = await query.get();
+
+      if (snapshot.docs.isNotEmpty) {
+        _lastDocument = snapshot.docs.last;
+        _messages.addAll(snapshot.docs);
+      }
+
+      if (snapshot.docs.length < _messagesPerPage) {
+        _hasMore = false;
+      }
+    } catch (e) {
+      debugPrint("Error loading messages: $e");
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+  
+  Future<int> getTotalUnreadCount() async {
+  final currentUserId = _auth.currentUser?.uid;
+  if (currentUserId == null) return 0;
 
   try {
-    Query query = _firestore.collection('conversations').doc('conversationId').collection('messages')
-        .orderBy('timestamp', descending: true)
-        .limit(_messagesPerPage);
+    final conversationsSnapshot = await _firestore
+        .collection('conversations')
+        .where('participants', arrayContains: currentUserId)
+        .get();
 
-    if (_lastDocument != null) {
-      query = query.startAfterDocument(_lastDocument!);
+    int totalUnread = 0;
+    for (var doc in conversationsSnapshot.docs) {
+      final data = doc.data();
+      final unreadCount = (data['unreadCount']?[currentUserId] ?? 0) as int;
+      totalUnread += unreadCount;
     }
-
-    final snapshot = await query.get();
-
-    if (snapshot.docs.isNotEmpty) {
-      _lastDocument = snapshot.docs.last;
-      _messages.addAll(snapshot.docs);
-    }
-
-    if (snapshot.docs.length < _messagesPerPage) {
-      _hasMore = false;
-    }
+    return totalUnread;
   } catch (e) {
-    debugPrint("Error loading messages: $e");
-  } finally {
-    setState(() => _isLoading = false);
+    debugPrint('Error getting total unread count: $e');
+    return 0;
   }
 }
-
-  
 
   Future<void> _loadFriends() async {
     final currentUserId = _auth.currentUser?.uid;
@@ -276,7 +294,6 @@ Future<void> _loadMessages() async {
       }
     });
   }
-  
 
   @override
   Widget build(BuildContext context) {
@@ -288,7 +305,10 @@ Future<void> _loadMessages() async {
     return Scaffold(
       appBar: AppBar(
         elevation: 0,
-        title: const Text('Messages', style:TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text(
+          'Messages',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
         actions: [
           IconButton(
             onPressed: () => _showNewChatDialog(context),
@@ -297,11 +317,12 @@ Future<void> _loadMessages() async {
         ],
       ),
       body: StreamBuilder<QuerySnapshot>(
-        stream: _firestore
-            .collection('conversations')
-            .where('participants', arrayContains: currentUserId)
-            .orderBy('lastMessageTime', descending: true)
-            .snapshots(),
+        stream:
+            _firestore
+                .collection('conversations')
+                .where('participants', arrayContains: currentUserId)
+                .orderBy('lastMessageTime', descending: true)
+                .snapshots(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
@@ -322,9 +343,10 @@ Future<void> _loadMessages() async {
             );
           }
 
-          final conversations = snapshot.data!.docs.map((doc) {
-            return {'id': doc.id, ...doc.data() as Map<String, dynamic>};
-          }).toList();
+          final conversations =
+              snapshot.data!.docs.map((doc) {
+                return {'id': doc.id, ...doc.data() as Map<String, dynamic>};
+              }).toList();
 
           return ListView.builder(
             itemCount: conversations.length,
@@ -346,23 +368,26 @@ Future<void> _loadMessages() async {
                 ),
                 elevation: 2,
                 child: ListTile(
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 10,
+                  ),
                   leading: CircleAvatar(
                     radius: 24,
                     backgroundImage:
                         userData['photoURL']?.isNotEmpty == true
                             ? NetworkImage(userData['photoURL'])
                             : null,
-                    child: userData['photoURL']?.isEmpty == true
-                        ? const Icon(Icons.person)
-                        : null,
+                    child:
+                        userData['photoURL']?.isEmpty == true
+                            ? const Icon(Icons.person)
+                            : null,
                   ),
                   title: Text(
                     userData['displayName'] ?? 'Unknown',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   subtitle: Text(
                     (convo['lastMessage'] as String?)?.isNotEmpty == true
@@ -377,33 +402,57 @@ Future<void> _loadMessages() async {
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       Text(
-                        _formatTimestamp(convo['lastMessageTime'] as Timestamp?),
+                        _formatTimestamp(
+                          convo['lastMessageTime'] as Timestamp?,
+                        ),
                         style: Theme.of(context).textTheme.labelSmall,
                       ),
                       const SizedBox(height: 6),
-                      if ((convo['unreadCount']?[currentUserId] ?? 0) > 0)
-                        Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(
-                            color: Theme.of(context).colorScheme.primary,
-                            shape: BoxShape.circle,
-                          ),
-                          child: Text(
-                            convo['unreadCount'][currentUserId].toString(),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
+                      // Show unread count if there are unread messages
+                      Builder(
+                        builder: (context) {
+                          final unreadCount =
+                              (convo['unreadCount']?[currentUserId] ?? 0)
+                                  as int;
+                          if (unreadCount > 0) {
+                            return Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Theme.of(context).colorScheme.error,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              constraints: const BoxConstraints(
+                                minWidth: 18,
+                                minHeight: 18,
+                              ),
+                              child: Text(
+                                unreadCount > 99
+                                    ? '99+'
+                                    : unreadCount.toString(),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            );
+                          }
+                          return const SizedBox.shrink();
+                        },
+                      ),
                     ],
                   ),
-                  onTap: () => _openChatRoom(
-                    context,
-                    otherUserId,
-                    userData['displayName'] ?? 'Unknown',
-                    convo['id'],
-                  ),
+                  onTap:
+                      () => _openChatRoom(
+                        context,
+                        otherUserId,
+                        userData['displayName'] ?? 'Unknown',
+                        convo['id'],
+                      ),
                 ),
               );
             },
@@ -412,7 +461,6 @@ Future<void> _loadMessages() async {
       ),
     );
   }
-
 
   String _formatTimestamp(Timestamp? timestamp) {
     if (timestamp == null) return '';

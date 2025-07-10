@@ -602,12 +602,14 @@ Future<void> _blockFriend(String ContactId) async {
                                 itemBuilder: (context) => [
                                   const PopupMenuItem(
                                     value: 'delete',
-                                    child: Text('Delete Friend'),
+                                    child: Text('Delete'),
                                   ),
+                                  /*
                                   const PopupMenuItem(
                                     value: 'block',
-                                    child: Text('Block Friend'),
+                                    child: Text('Block'),
                                   ),
+                                  */
                                 ],
                               ),
                               shape: RoundedRectangleBorder(

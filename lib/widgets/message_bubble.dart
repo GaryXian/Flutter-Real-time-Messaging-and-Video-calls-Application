@@ -510,7 +510,7 @@ List<Widget> _buildMenuItems(
     ));
     items.add(const Divider(height: 1));
   }
-
+/*
   items.add(_buildOptionItem(
     'Reply',
     Icons.reply,
@@ -519,7 +519,7 @@ List<Widget> _buildMenuItems(
       _replyMessage(context);
     },
   ));
-
+*/
   if (canDelete) {
     items.add(const Divider(height: 1));
     items.add(_buildOptionItem(
