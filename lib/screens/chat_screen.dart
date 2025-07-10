@@ -129,8 +129,6 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-
-
   void _startVideoCall(bool isVideoCall) {
     Navigator.push(
       context,
@@ -183,8 +181,13 @@ class _ChatScreenState extends State<ChatScreen> {
                 if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
                   return const Center(child: Text('No messages yet.'));
                 }
-
-                final messages = snapshot.data!.docs;
+                final messages =
+                    snapshot.data!.docs.where((doc) {
+                      final data = doc.data() as Map<String, dynamic>;
+                      final hiddenFor = data['hiddenFor'] as List<dynamic>?;
+                      return hiddenFor == null ||
+                          !hiddenFor.contains(_currentUserId);
+                    }).toList();
 
                 // Mark as read only on first load with data
                 _markMessagesAsReadOnce();
@@ -378,76 +381,80 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _confirmDeleteConversation(BuildContext context) async {
-  final confirm = await showDialog<bool>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      title: const Text('Delete Conversation?'),
-      content: const Text(
-        'All messages and calls will be permanently deleted.',
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(ctx, false),
-          child: const Text('Cancel'),
-        ),
-        TextButton(
-          onPressed: () => Navigator.pop(ctx, true),
-          child: const Text(
-            'Delete',
-            style: TextStyle(color: Colors.red),
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder:
+          (ctx) => AlertDialog(
+            title: const Text('Delete Conversation?'),
+            content: const Text(
+              'All messages and calls will be permanently deleted.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text(
+                  'Delete',
+                  style: TextStyle(color: Colors.red),
+                ),
+              ),
+            ],
           ),
-        ),
-      ],
-    ),
-  );
+    );
 
-  if (confirm != true) return;
+    if (confirm != true) return;
 
-  try {
-    final batch = _firestore.batch();
+    try {
+      final batch = _firestore.batch();
 
-    // Delete messages
-    final messagesRef = _firestore
-        .collection('conversations')
-        .doc(widget.conversationId)
-        .collection('messages');
-    final messages = await messagesRef.get();
-    for (final doc in messages.docs) {
-      batch.delete(doc.reference);
-    }
-
-    // Delete call data (calls + iceCandidates)
-    final callDocRef = _firestore.collection('calls').doc(widget.conversationId);
-    final callDoc = await callDocRef.get();
-    if (callDoc.exists) {
-      final candidatesRef = callDocRef.collection('iceCandidates');
-      final candidates = await candidatesRef.get();
-      for (final doc in candidates.docs) {
+      // Delete messages
+      final messagesRef = _firestore
+          .collection('conversations')
+          .doc(widget.conversationId)
+          .collection('messages');
+      final messages = await messagesRef.get();
+      for (final doc in messages.docs) {
         batch.delete(doc.reference);
       }
-      batch.delete(callDocRef);
+
+      // Delete call data (calls + iceCandidates)
+      final callDocRef = _firestore
+          .collection('calls')
+          .doc(widget.conversationId);
+      final callDoc = await callDocRef.get();
+      if (callDoc.exists) {
+        final candidatesRef = callDocRef.collection('iceCandidates');
+        final candidates = await candidatesRef.get();
+        for (final doc in candidates.docs) {
+          batch.delete(doc.reference);
+        }
+        batch.delete(callDocRef);
+      }
+
+      // Delete conversation document
+      final conversationRef = _firestore
+          .collection('conversations')
+          .doc(widget.conversationId);
+      batch.delete(conversationRef);
+
+      await batch.commit();
+
+      if (!context.mounted) return;
+
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (context) => const MessagesScreen()),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to delete: ${e.toString()}')),
+      );
     }
-
-    // Delete conversation document
-    final conversationRef = _firestore.collection('conversations').doc(widget.conversationId);
-    batch.delete(conversationRef);
-
-    await batch.commit();
-
-    if (!context.mounted) return;
-
-Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (context) => const MessagesScreen()),
-);
-  } catch (e) {
-    if (!context.mounted) return;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Failed to delete: ${e.toString()}')),
-    );
   }
-}
-
 
   @override
   void dispose() {

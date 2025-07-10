@@ -25,6 +25,7 @@ class MessageBubble extends StatefulWidget {
   final bool isTyping;
   final bool isDeleted; // New field to track deleted status
   final Map<String, String>? reaction; // New field for reactions
+  final List<String>? hiddenFor;
 
   MessageBubble({
     super.key,
@@ -40,6 +41,7 @@ class MessageBubble extends StatefulWidget {
     this.isTyping = false,
     this.isDeleted = false,
     this.reaction,
+    this.hiddenFor,
   });
 
   @override
@@ -114,6 +116,53 @@ class _MessageBubbleState extends State<MessageBubble> {
       }
     }
   }
+  Future<void> _hideMessage(BuildContext context) async {
+  final confirm = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Remove Message?'),
+      content: const Text('This will remove the message from your view only.'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(true),
+          child: const Text('Remove'),
+        ),
+      ],
+    ),
+  );
+
+  if (confirm == true) {
+    try {
+      final currentUserId = FirebaseAuth.instance.currentUser!.uid;
+      
+      await FirebaseFirestore.instance
+          .collection('conversations')
+          .doc(widget.conversationId)
+          .collection('messages')
+          .doc(widget.messageId)
+          .update({
+        'hiddenFor': FieldValue.arrayUnion([currentUserId])
+      });
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Message removed from your view')),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to remove: ${e.toString()}')),
+        );
+      }
+    }
+  }
+}
+
 
   Future<void> _updateLastMessageAfterDeletion(String conversationId) async {
     final messages =
@@ -510,6 +559,14 @@ List<Widget> _buildMenuItems(
     ));
     items.add(const Divider(height: 1));
   }
+  items.add(_buildOptionItem(
+  'Remove',
+  Icons.visibility_off_outlined,
+  () {
+    overlayEntry.remove();
+    _hideMessage(context);
+  },
+));
 /*
   items.add(_buildOptionItem(
     'Reply',
