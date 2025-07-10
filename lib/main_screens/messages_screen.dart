@@ -181,29 +181,30 @@ class _MessagesScreenState extends State<MessagesScreen> {
       setState(() => _isLoading = false);
     }
   }
-  
+
   Future<int> getTotalUnreadCount() async {
-  final currentUserId = _auth.currentUser?.uid;
-  if (currentUserId == null) return 0;
+    final currentUserId = _auth.currentUser?.uid;
+    if (currentUserId == null) return 0;
 
-  try {
-    final conversationsSnapshot = await _firestore
-        .collection('conversations')
-        .where('participants', arrayContains: currentUserId)
-        .get();
+    try {
+      final conversationsSnapshot =
+          await _firestore
+              .collection('conversations')
+              .where('participants', arrayContains: currentUserId)
+              .get();
 
-    int totalUnread = 0;
-    for (var doc in conversationsSnapshot.docs) {
-      final data = doc.data();
-      final unreadCount = (data['unreadCount']?[currentUserId] ?? 0) as int;
-      totalUnread += unreadCount;
+      int totalUnread = 0;
+      for (var doc in conversationsSnapshot.docs) {
+        final data = doc.data();
+        final unreadCount = (data['unreadCount']?[currentUserId] ?? 0) as int;
+        totalUnread += unreadCount;
+      }
+      return totalUnread;
+    } catch (e) {
+      debugPrint('Error getting total unread count: $e');
+      return 0;
     }
-    return totalUnread;
-  } catch (e) {
-    debugPrint('Error getting total unread count: $e');
-    return 0;
   }
-}
 
   Future<void> _loadFriends() async {
     final currentUserId = _auth.currentUser?.uid;
@@ -344,9 +345,34 @@ class _MessagesScreenState extends State<MessagesScreen> {
           }
 
           final conversations =
-              snapshot.data!.docs.map((doc) {
-                return {'id': doc.id, ...doc.data() as Map<String, dynamic>};
-              }).toList();
+              snapshot.data!.docs
+                  .where((doc) {
+                    final data = doc.data() as Map<String, dynamic>;
+                    final deletedBy = data['deletedBy'] as List<dynamic>? ?? [];
+                    return !deletedBy.contains(currentUserId);
+                  })
+                  .map((doc) {
+                    return {
+                      'id': doc.id,
+                      ...doc.data() as Map<String, dynamic>,
+                    };
+                  })
+                  .toList();
+
+          if (conversations.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text('No conversations yet'),
+                  TextButton(
+                    onPressed: () => _showNewChatDialog(context),
+                    child: const Text('Start a new conversation'),
+                  ),
+                ],
+              ),
+            );
+          }
 
           return ListView.builder(
             itemCount: conversations.length,
@@ -453,6 +479,12 @@ class _MessagesScreenState extends State<MessagesScreen> {
                         userData['displayName'] ?? 'Unknown',
                         convo['id'],
                       ),
+                  onLongPress:
+                      () => _showConversationOptions(
+                        context,
+                        convo['id'],
+                        userData['displayName'] ?? 'Unknown',
+                      ),
                 ),
               );
             },
@@ -473,6 +505,57 @@ class _MessagesScreenState extends State<MessagesScreen> {
       return DateFormat('HH:mm').format(date);
     }
     return DateFormat('MMM d').format(date);
+  }
+
+  Future<void> _deleteConversationFromOneSide(
+    String conversationId,
+    String otherUserName,
+  ) async {
+    final currentUserId = _auth.currentUser?.uid;
+    if (currentUserId == null) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder:
+          (ctx) => AlertDialog(
+            title: const Text('Delete Conversation?'),
+            content: Text(
+              'This will remove the conversation with $otherUserName from your messages. The other person will still have access to the conversation.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text(
+                  'Delete',
+                  style: TextStyle(color: Colors.red),
+                ),
+              ),
+            ],
+          ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      await _firestore.collection('conversations').doc(conversationId).update({
+        'deletedBy': FieldValue.arrayUnion([currentUserId]),
+        'unreadCount.$currentUserId': 0,
+      });
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Conversation deleted')));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to delete: ${e.toString()}')),
+      );
+    }
   }
 
   Future<void> _showNewChatDialog(BuildContext context) async {
@@ -545,6 +628,40 @@ class _MessagesScreenState extends State<MessagesScreen> {
                 child: const Text('Cancel'),
               ),
             ],
+          ),
+    );
+  }
+
+  void _showConversationOptions(
+    BuildContext context,
+    String conversationId,
+    String otherUserName,
+  ) {
+    showModalBottomSheet(
+      context: context,
+      builder:
+          (ctx) => SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.delete, color: Colors.red),
+                  title: const Text('Delete Conversation'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _deleteConversationFromOneSide(
+                      conversationId,
+                      otherUserName,
+                    );
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.cancel),
+                  title: const Text('Cancel'),
+                  onTap: () => Navigator.pop(ctx),
+                ),
+              ],
+            ),
           ),
     );
   }

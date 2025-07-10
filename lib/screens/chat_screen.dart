@@ -357,14 +357,18 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                     const SizedBox(height: 16),
                     const Divider(),
+                    /*
                     ListTile(
+                      
                       leading: const Icon(Icons.delete),
                       title: const Text('Delete conversation'),
                       onTap: () {
                         Navigator.pop(ctx);
                         _confirmDeleteConversation(context);
                       },
+                      
                     ),
+                    */
                   ],
                 ),
               );
